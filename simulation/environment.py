@@ -3,8 +3,11 @@ import random
 
 class Environment:
     """
-    Environment class for deterministic multi-agent simulation.
+    Environment class for multi-agent simulation.
     Manages agent population, interactions, and simulation cycles.
+    
+    Note: While agent pairing uses randomization, the simulation can be made
+    deterministic by setting a random seed before creating the environment.
     """
     
     def __init__(self, agents, resource_pool=None):
@@ -31,13 +34,13 @@ class Environment:
         
         for agent1, agent2 in pairs:
             # Trigger decision-making for both agents
-            # For simplicity, we'll use the decide_action method if available
-            action1 = agent1.decide_action(None) if hasattr(agent1, 'decide_action') else None
-            action2 = agent2.decide_action(None) if hasattr(agent2, 'decide_action') else None
+            # Pass self as the environment context (compatible with agents expecting 'world')
+            action1 = agent1.decide_action(self) if hasattr(agent1, 'decide_action') else None
+            action2 = agent2.decide_action(self) if hasattr(agent2, 'decide_action') else None
             
             # If both agents cooperate (trade), perform the trade
+            # Each agent gains 1 resource as a simple trade reward
             if action1 == "trade" and action2 == "trade":
-                # Simple trade: exchange resources
                 agent1.resources += 1
                 agent2.resources += 1
         
