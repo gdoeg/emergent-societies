@@ -34,7 +34,10 @@ class Agent:
         Returns:
             str: "cooperate" if cooperation_tendency >= 0.5, "defect" otherwise
         """
-        if not self.alive or self.resources <= 0:
+        if not self.alive:
+            return "defect"
+        
+        if self.resources <= 0:
             self.alive = False
             return "defect"
         
@@ -67,10 +70,34 @@ class Agent:
         Args:
             other_agent: The agent to trade with
             trade_amount: Amount of resources to transfer (positive = give, negative = receive)
+                         Zero-amount trades are allowed but create no actual resource transfer
             
         Returns:
             bool: True if trade was successful, False otherwise
         """
+        # Validate other_agent is a valid Agent object
+        if not other_agent or not hasattr(other_agent, 'resources') or not hasattr(other_agent, 'agent_id'):
+            self.memory_log.append({
+                "action": "trade",
+                "status": "failed",
+                "reason": "invalid_other_agent",
+                "attempted_amount": trade_amount
+            })
+            return False
+        
+        # Handle zero-amount trades (no-op but still logged)
+        if trade_amount == 0:
+            self.memory_log.append({
+                "action": "trade",
+                "status": "success",
+                "other_agent_id": other_agent.agent_id,
+                "amount": 0,
+                "my_resources_after": self.resources,
+                "other_agent_resources_after": other_agent.resources,
+                "note": "zero_amount_trade"
+            })
+            return True
+        
         # Validate trade amount
         if trade_amount > self.resources:
             # Cannot trade more resources than owned
@@ -132,13 +159,13 @@ class Agent:
         # Log the communication event
         self.memory_log.append({
             "action": "communicate",
-            "other_agent_id": other_agent.agent_id if other_agent else None,
+            "other_agent_id": other_agent.agent_id if (other_agent and hasattr(other_agent, 'agent_id')) else None,
             "message": message,
             "my_resources": self.resources
         })
         
         # Optionally log receipt on other agent's memory
-        if other_agent:
+        if other_agent and hasattr(other_agent, 'memory_log') and hasattr(other_agent, 'agent_id'):
             other_agent.memory_log.append({
                 "action": "received_communication",
                 "from_agent_id": self.agent_id,
