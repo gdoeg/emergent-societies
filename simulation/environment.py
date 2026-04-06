@@ -37,17 +37,31 @@ class Environment:
             action1 = agent1.decide_action(agent2) if hasattr(agent1, 'decide_action') else None
             action2 = agent2.decide_action(agent1) if hasattr(agent2, 'decide_action') else None
             
-            # Update trust based on observed partner behavior
-            if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
-                if action2 == "defect":
-                    agent1.update_trust(agent2.agent_id, -0.05)
-            if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
-                if action1 == "defect":
-                    agent2.update_trust(agent1.agent_id, -0.05)
+            # Record interaction for both agents
+            if hasattr(agent1, 'record_interaction') and hasattr(agent2, 'agent_id'):
+                agent1.record_interaction(agent2.agent_id)
+            if hasattr(agent2, 'record_interaction') and hasattr(agent1, 'agent_id'):
+                agent2.record_interaction(agent1.agent_id)
             
-            # If both agents cooperate (trade), perform the trade
+            # Update trust based on observed partner behavior
+            if action1 == "cooperate" and action2 == "cooperate":
+                # Both cooperated - increase trust
+                if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
+                    agent1.update_trust(agent2.agent_id, 0.05)
+                if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
+                    agent2.update_trust(agent1.agent_id, 0.05)
+            else:
+                # Handle defection - decrease trust
+                if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
+                    if action2 == "defect":
+                        agent1.update_trust(agent2.agent_id, -0.05)
+                if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
+                    if action1 == "defect":
+                        agent2.update_trust(agent1.agent_id, -0.05)
+            
+            # If both agents cooperate, perform the trade
             # Each agent gains 1 resource as a simple trade reward
-            if action1 == "trade" and action2 == "trade":
+            if action1 == "cooperate" and action2 == "cooperate":
                 agent1.resources += 1
                 agent2.resources += 1
         
