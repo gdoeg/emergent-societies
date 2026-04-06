@@ -34,9 +34,16 @@ class Environment:
         
         for agent1, agent2 in pairs:
             # Trigger decision-making for both agents
-            # Pass self as the environment context (compatible with agents expecting 'world')
-            action1 = agent1.decide_action(self) if hasattr(agent1, 'decide_action') else None
-            action2 = agent2.decide_action(self) if hasattr(agent2, 'decide_action') else None
+            action1 = agent1.decide_action(agent2) if hasattr(agent1, 'decide_action') else None
+            action2 = agent2.decide_action(agent1) if hasattr(agent2, 'decide_action') else None
+            
+            # Update trust based on observed partner behavior
+            if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
+                if action2 == "defect":
+                    agent1.update_trust(agent2.agent_id, -0.05)
+            if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
+                if action1 == "defect":
+                    agent2.update_trust(agent1.agent_id, -0.05)
             
             # If both agents cooperate (trade), perform the trade
             # Each agent gains 1 resource as a simple trade reward

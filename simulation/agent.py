@@ -1,3 +1,6 @@
+from typing import Dict
+
+
 class Agent:
     """
     Minimal deterministic Agent class for multi-agent simulation.
@@ -19,20 +22,72 @@ class Agent:
         self.resources = resources
         self.cooperation_tendency = max(0.0, min(1.0, cooperation_tendency))  # Clamp between 0 and 1
         self.memory_log = []
+        self.relationships: Dict[str, Dict[str, float]] = {}
         
         # Maintain backwards compatibility
         self.id = agent_id
         self.alive = True
     
+    # Multiplier for trust bias on cooperation threshold.
+    # Maps trust [0.0, 1.0] to a bias of [-0.2, +0.2], keeping decisions
+    # within a ±20% range of the base cooperation_tendency.
+    _TRUST_BIAS_SCALE = 0.4
+
+    def get_relationship(self, other_id):
+        """
+        Return the relationship record for the given agent ID, creating a default if absent.
+        
+        Args:
+            other_id: The agent_id of the other agent
+            
+        Returns:
+            dict: {"trust": float, "interaction_count": int}
+        """
+        if other_id not in self.relationships:
+            self.relationships[other_id] = {"trust": 0.5, "interaction_count": 0}
+        return self.relationships[other_id]
+    
+    def update_trust(self, other_id, delta):
+        """
+        Adjust trust toward other_id by delta, clamped to [0.0, 1.0].
+        
+        Args:
+            other_id: The agent_id of the other agent
+            delta: Amount to add to current trust (positive or negative)
+        """
+        rel = self.get_relationship(other_id)
+        old_trust = rel["trust"]
+        rel["trust"] = max(0.0, min(1.0, rel["trust"] + delta))
+        self.memory_log.append({
+            "action": "trust_update",
+            "other_agent_id": other_id,
+            "trust_before": old_trust,
+            "trust_after": rel["trust"],
+            "delta": delta
+        })
+    
+    def record_interaction(self, other_id):
+        """
+        Increment the interaction count for the given agent ID.
+        
+        Args:
+            other_id: The agent_id of the other agent
+        """
+        self.get_relationship(other_id)["interaction_count"] += 1
+    
     def decide_action(self, other_agent):
         """
         Deterministically decide whether to cooperate or defect with another agent.
+        
+        Decision is biased by the trust score toward the other agent: the effective
+        cooperation threshold is shifted so that higher trust makes cooperation more
+        likely and lower trust makes defection more likely.
         
         Args:
             other_agent: The agent to interact with (or world object for backwards compatibility)
             
         Returns:
-            str: "cooperate" if cooperation_tendency >= 0.5, "defect" otherwise
+            str: "cooperate" or "defect"
         """
         if not self.alive:
             return "defect"
@@ -41,16 +96,23 @@ class Agent:
             self.alive = False
             return "defect"
         
-        # Deterministic decision based on cooperation_tendency
-        if self.cooperation_tendency >= 0.5:
-            decision = "cooperate"
-        else:
-            decision = "defect"
-        
         # Get other_agent_id safely (handle both Agent objects and other types like World)
         other_agent_id = None
         if other_agent and hasattr(other_agent, 'agent_id'):
             other_agent_id = other_agent.agent_id
+        
+        # Bias the effective cooperation threshold using trust toward the other agent.
+        # A positive bias (high trust) makes cooperation easier; negative bias (low trust)
+        # raises the effective threshold, making defection more likely.
+        trust_bias = 0.0
+        if other_agent_id is not None:
+            trust = self.get_relationship(other_agent_id)["trust"]
+            trust_bias = (trust - 0.5) * self._TRUST_BIAS_SCALE
+        
+        if self.cooperation_tendency + trust_bias >= 0.5:
+            decision = "cooperate"
+        else:
+            decision = "defect"
         
         # Log the decision
         self.memory_log.append({
@@ -126,6 +188,12 @@ class Agent:
         # Execute trade
         self.resources -= trade_amount
         other_agent.resources += trade_amount
+        
+        # Record interaction and increase trust for both parties
+        self.record_interaction(other_agent.agent_id)
+        self.update_trust(other_agent.agent_id, 0.05)
+        other_agent.record_interaction(self.agent_id)
+        other_agent.update_trust(self.agent_id, 0.05)
         
         # Log successful trade
         self.memory_log.append({
