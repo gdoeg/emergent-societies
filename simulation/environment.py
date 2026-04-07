@@ -44,10 +44,14 @@ class Environment:
                 agent2.record_interaction(agent1.agent_id)
             
             # Update trust based on observed partner behavior
-            # Successful cooperation trust updates are handled centrally by
-            # the trade/success path to avoid double-counting here.
-            if not (action1 == "cooperate" and action2 == "cooperate"):
-                # Handle defection - decrease trust
+            if action1 == "cooperate" and action2 == "cooperate":
+                # Both cooperated - increase trust
+                if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
+                    agent1.update_trust(agent2.agent_id, 0.05)
+                if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
+                    agent2.update_trust(agent1.agent_id, 0.05)
+            else:
+                # Handle defection - decrease trust toward a partner observed to defect
                 if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
                     if action2 == "defect":
                         agent1.update_trust(agent2.agent_id, -0.05)
@@ -55,24 +59,13 @@ class Environment:
                     if action1 == "defect":
                         agent2.update_trust(agent1.agent_id, -0.05)
             
-            # If both agents cooperate, grant each agent a resource reward from the environment.
-            # This is an environment-provided bonus (not a transfer between agents), so
-            # resources are mutated directly and logged in each agent's memory_log.
+            # If both agents cooperate, grant each a resource reward from the environment.
+            # Delegated through Agent.receive_resource() for consistent validation and logging.
             if action1 == "cooperate" and action2 == "cooperate":
-                agent1.resources += 1
-                agent2.resources += 1
-                if hasattr(agent1, 'memory_log'):
-                    agent1.memory_log.append({
-                        "action": "cooperation_reward",
-                        "other_agent_id": agent2.agent_id if hasattr(agent2, 'agent_id') else None,
-                        "my_resources_after": agent1.resources
-                    })
-                if hasattr(agent2, 'memory_log'):
-                    agent2.memory_log.append({
-                        "action": "cooperation_reward",
-                        "other_agent_id": agent1.agent_id if hasattr(agent1, 'agent_id') else None,
-                        "my_resources_after": agent2.resources
-                    })
+                if hasattr(agent1, 'receive_resource'):
+                    agent1.receive_resource(1, source="cooperation_reward")
+                if hasattr(agent2, 'receive_resource'):
+                    agent2.receive_resource(1, source="cooperation_reward")
         
         self.cycle_count += 1
     

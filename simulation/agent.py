@@ -217,6 +217,27 @@ class Agent:
         
         return True
     
+    def receive_resource(self, amount, source=None):
+        """
+        Add resources to this agent from an external source (e.g. environment reward).
+        
+        Use this instead of mutating `resources` directly so that every resource
+        change is validated and recorded in `memory_log`.
+        
+        Args:
+            amount: Positive number of resources to add
+            source: Optional label identifying the origin of the reward
+        """
+        if amount <= 0:
+            return
+        self.resources += amount
+        self.memory_log.append({
+            "action": "receive_resource",
+            "amount": amount,
+            "source": source,
+            "my_resources_after": self.resources
+        })
+    
     def communicate(self, other_agent, message):
         """
         Store communication events in memory_log.
