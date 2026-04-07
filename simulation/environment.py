@@ -34,15 +34,38 @@ class Environment:
         
         for agent1, agent2 in pairs:
             # Trigger decision-making for both agents
-            # Pass self as the environment context (compatible with agents expecting 'world')
-            action1 = agent1.decide_action(self) if hasattr(agent1, 'decide_action') else None
-            action2 = agent2.decide_action(self) if hasattr(agent2, 'decide_action') else None
+            action1 = agent1.decide_action(agent2) if hasattr(agent1, 'decide_action') else None
+            action2 = agent2.decide_action(agent1) if hasattr(agent2, 'decide_action') else None
             
-            # If both agents cooperate (trade), perform the trade
-            # Each agent gains 1 resource as a simple trade reward
-            if action1 == "trade" and action2 == "trade":
-                agent1.resources += 1
-                agent2.resources += 1
+            # Record interaction for both agents
+            if hasattr(agent1, 'record_interaction') and hasattr(agent2, 'agent_id'):
+                agent1.record_interaction(agent2.agent_id)
+            if hasattr(agent2, 'record_interaction') and hasattr(agent1, 'agent_id'):
+                agent2.record_interaction(agent1.agent_id)
+            
+            # Update trust based on observed partner behavior
+            if action1 == "cooperate" and action2 == "cooperate":
+                # Both cooperated - increase trust
+                if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
+                    agent1.update_trust(agent2.agent_id, 0.05)
+                if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
+                    agent2.update_trust(agent1.agent_id, 0.05)
+            else:
+                # Handle defection - decrease trust toward a partner observed to defect
+                if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
+                    if action2 == "defect":
+                        agent1.update_trust(agent2.agent_id, -0.05)
+                if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
+                    if action1 == "defect":
+                        agent2.update_trust(agent1.agent_id, -0.05)
+            
+            # If both agents cooperate, grant each a resource reward from the environment.
+            # Delegated through Agent.receive_resource() for consistent validation and logging.
+            if action1 == "cooperate" and action2 == "cooperate":
+                if hasattr(agent1, 'receive_resource'):
+                    agent1.receive_resource(1, source="cooperation_reward")
+                if hasattr(agent2, 'receive_resource'):
+                    agent2.receive_resource(1, source="cooperation_reward")
         
         self.cycle_count += 1
     
