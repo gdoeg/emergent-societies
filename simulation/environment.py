@@ -44,13 +44,9 @@ class Environment:
                 agent2.record_interaction(agent1.agent_id)
             
             # Update trust based on observed partner behavior
-            if action1 == "cooperate" and action2 == "cooperate":
-                # Both cooperated - increase trust
-                if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
-                    agent1.update_trust(agent2.agent_id, 0.05)
-                if hasattr(agent2, 'update_trust') and hasattr(agent1, 'agent_id'):
-                    agent2.update_trust(agent1.agent_id, 0.05)
-            else:
+            # Successful cooperation trust updates are handled centrally by
+            # the trade/success path to avoid double-counting here.
+            if not (action1 == "cooperate" and action2 == "cooperate"):
                 # Handle defection - decrease trust
                 if hasattr(agent1, 'update_trust') and hasattr(agent2, 'agent_id'):
                     if action2 == "defect":
