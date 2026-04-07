@@ -1,4 +1,10 @@
-from typing import Dict
+from typing import Any, Dict, TypedDict
+
+
+class RelationshipRecord(TypedDict):
+    """Per-partner relationship state stored in Agent.relationships."""
+    trust: float
+    interaction_count: int
 
 
 class Agent:
@@ -22,7 +28,7 @@ class Agent:
         self.resources = resources
         self.cooperation_tendency = max(0.0, min(1.0, cooperation_tendency))  # Clamp between 0 and 1
         self.memory_log = []
-        self.relationships: Dict[str, Dict[str, float]] = {}
+        self.relationships: Dict[Any, RelationshipRecord] = {}
         
         # Maintain backwards compatibility
         self.id = agent_id
@@ -33,7 +39,7 @@ class Agent:
     # within a ±20% range of the base cooperation_tendency.
     _TRUST_BIAS_SCALE = 0.4
 
-    def get_relationship(self, other_id):
+    def get_relationship(self, other_id) -> RelationshipRecord:
         """
         Return the relationship record for the given agent ID, creating a default if absent.
         
@@ -41,7 +47,7 @@ class Agent:
             other_id: The agent_id of the other agent
             
         Returns:
-            dict: {"trust": float, "interaction_count": int}
+            RelationshipRecord: {"trust": float, "interaction_count": int}
         """
         if other_id not in self.relationships:
             self.relationships[other_id] = {"trust": 0.5, "interaction_count": 0}
@@ -147,7 +153,8 @@ class Agent:
             })
             return False
         
-        # Handle zero-amount trades (no-op but still logged)
+        # Handle zero-amount trades (no-op but still logged; no relationship update since no
+        # actual exchange occurred)
         if trade_amount == 0:
             self.memory_log.append({
                 "action": "trade",
@@ -188,12 +195,6 @@ class Agent:
         # Execute trade
         self.resources -= trade_amount
         other_agent.resources += trade_amount
-        
-        # Record interaction and increase trust for both parties
-        self.record_interaction(other_agent.agent_id)
-        self.update_trust(other_agent.agent_id, 0.05)
-        other_agent.record_interaction(self.agent_id)
-        other_agent.update_trust(self.agent_id, 0.05)
         
         # Log successful trade
         self.memory_log.append({

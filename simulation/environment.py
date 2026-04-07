@@ -55,11 +55,24 @@ class Environment:
                     if action1 == "defect":
                         agent2.update_trust(agent1.agent_id, -0.05)
             
-            # If both agents cooperate, perform the trade
-            # Each agent gains 1 resource as a simple trade reward
+            # If both agents cooperate, grant each agent a resource reward from the environment.
+            # This is an environment-provided bonus (not a transfer between agents), so
+            # resources are mutated directly and logged in each agent's memory_log.
             if action1 == "cooperate" and action2 == "cooperate":
                 agent1.resources += 1
                 agent2.resources += 1
+                if hasattr(agent1, 'memory_log'):
+                    agent1.memory_log.append({
+                        "action": "cooperation_reward",
+                        "other_agent_id": agent2.agent_id if hasattr(agent2, 'agent_id') else None,
+                        "my_resources_after": agent1.resources
+                    })
+                if hasattr(agent2, 'memory_log'):
+                    agent2.memory_log.append({
+                        "action": "cooperation_reward",
+                        "other_agent_id": agent1.agent_id if hasattr(agent1, 'agent_id') else None,
+                        "my_resources_after": agent2.resources
+                    })
         
         self.cycle_count += 1
     
