@@ -32,6 +32,36 @@ class SimulationConfig:
     scarcity_level: float = 0.5
     communication_enabled: bool = True
 
+    def __post_init__(self) -> None:
+        """Validate documented configuration constraints."""
+        if self.num_agents < 0:
+            raise ValueError("num_agents must be non-negative")
+        if self.num_steps < 0:
+            raise ValueError("num_steps must be non-negative")
+
+        valid_distributions = {"uniform", "random"}
+        if self.resource_distribution not in valid_distributions:
+            raise ValueError(
+                "resource_distribution must be one of "
+                f"{sorted(valid_distributions)}, got {self.resource_distribution!r}"
+            )
+
+        if self.resource_distribution == "uniform":
+            if self.initial_resources < 0:
+                raise ValueError(
+                    "initial_resources must be non-negative for "
+                    "resource_distribution='uniform'"
+                )
+        elif self.resource_distribution == "random":
+            if self.initial_resources < 1:
+                raise ValueError(
+                    "initial_resources must be at least 1 for "
+                    "resource_distribution='random'"
+                )
+
+        if not 0.0 <= self.scarcity_level <= 1.0:
+            raise ValueError("scarcity_level must be within [0.0, 1.0]")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -55,7 +85,7 @@ class SimulationConfig:
         Returns:
             A new :class:`SimulationConfig` instance.
         """
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         valid_fields = cls.__dataclass_fields__.keys()
         filtered = {k: v for k, v in data.items() if k in valid_fields}

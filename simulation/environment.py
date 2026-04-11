@@ -44,17 +44,18 @@ class Environment:
         communication_enabled = self.config.communication_enabled
         scarcity_level = self.config.scarcity_level
 
-        # Log resource distribution before step
-        resources_before = [agent.resources for agent in self.agents]
-        logger.debug("Cycle %d: Resources before step: %s", self.cycle_count, resources_before)
-        if resources_before:
-            logger.debug(
-                "Cycle %d: Resource stats - min: %s, max: %s, sum: %s",
-                self.cycle_count, min(resources_before), max(resources_before), sum(resources_before),
-            )
+        # Log resource distribution before step (guarded so list build is skipped when DEBUG is off)
+        if logger.isEnabledFor(logging.DEBUG):
+            resources_before = [agent.resources for agent in self.agents]
+            logger.debug("Cycle %d: Resources before step: %s", self.cycle_count, resources_before)
+            if resources_before:
+                logger.debug(
+                    "Cycle %d: Resource stats - min: %s, max: %s, sum: %s",
+                    self.cycle_count, min(resources_before), max(resources_before), sum(resources_before),
+                )
 
         pairs = self.pair_agents()
-        logger.debug(f"Cycle {self.cycle_count}: Created {len(pairs)} pairs from {len(self.agents)} agents")
+        logger.debug("Cycle %d: Created %d pairs from %d agents", self.cycle_count, len(pairs), len(self.agents))
         
         cooperation_count = 0
         reward_count = 0
@@ -115,32 +116,33 @@ class Environment:
         
         self.cycle_count += 1
         
-        # Log resource distribution after step
-        resources_after = [agent.resources for agent in self.agents]
-        logger.debug("Cycle %d: Resources after step: %s", self.cycle_count - 1, resources_after)
-        if resources_after:
-            avg = sum(resources_after) / len(resources_after)
-            logger.debug(
-                "Cycle %d: Resource stats - min: %s, max: %s, sum: %s",
-                self.cycle_count - 1, min(resources_after), max(resources_after), sum(resources_after),
-            )
-            logger.debug(
-                "Cycle %d: Summary - %d cooperation pairs, %d rewards granted",
-                self.cycle_count - 1, cooperation_count, reward_count,
-            )
-            
-            # Compute and log Gini coefficient for this step
-            from metrics.economics import compute_gini
-            gini = compute_gini(resources_after)
-            logger.debug(
-                "Cycle %d: Gini coefficient = %.4f, Total wealth = %d, Avg wealth = %.2f",
-                self.cycle_count - 1, gini, sum(resources_after), avg,
-            )
-        else:
-            logger.debug(
-                "Cycle %d: Summary - %d cooperation pairs, %d rewards granted (no agents)",
-                self.cycle_count - 1, cooperation_count, reward_count,
-            )
+        # Log resource distribution after step (guarded so list build is skipped when DEBUG is off)
+        if logger.isEnabledFor(logging.DEBUG):
+            resources_after = [agent.resources for agent in self.agents]
+            logger.debug("Cycle %d: Resources after step: %s", self.cycle_count - 1, resources_after)
+            if resources_after:
+                avg = sum(resources_after) / len(resources_after)
+                logger.debug(
+                    "Cycle %d: Resource stats - min: %s, max: %s, sum: %s",
+                    self.cycle_count - 1, min(resources_after), max(resources_after), sum(resources_after),
+                )
+                logger.debug(
+                    "Cycle %d: Summary - %d cooperation pairs, %d rewards granted",
+                    self.cycle_count - 1, cooperation_count, reward_count,
+                )
+                
+                # Compute and log Gini coefficient for this step
+                from metrics.economics import compute_gini
+                gini = compute_gini(resources_after)
+                logger.debug(
+                    "Cycle %d: Gini coefficient = %.4f, Total wealth = %d, Avg wealth = %.2f",
+                    self.cycle_count - 1, gini, sum(resources_after), avg,
+                )
+            else:
+                logger.debug(
+                    "Cycle %d: Summary - %d cooperation pairs, %d rewards granted (no agents)",
+                    self.cycle_count - 1, cooperation_count, reward_count,
+                )
     
     def pair_agents(self):
         """
