@@ -1,6 +1,10 @@
 import random
+import logging
 
 from simulation.config import SimulationConfig
+
+# Set up logger for environment debugging
+logger = logging.getLogger(__name__)
 
 
 class Environment:
@@ -40,7 +44,16 @@ class Environment:
         communication_enabled = self.config.communication_enabled
         scarcity_level = self.config.scarcity_level
 
+        # Log resource distribution before step
+        resources_before = [agent.resources for agent in self.agents]
+        logger.debug(f"Cycle {self.cycle_count}: Resources before step: {resources_before}")
+        logger.debug(f"Cycle {self.cycle_count}: Resource stats - min: {min(resources_before)}, max: {max(resources_before)}, sum: {sum(resources_before)}")
+
         pairs = self.pair_agents()
+        logger.debug(f"Cycle {self.cycle_count}: Created {len(pairs)} pairs from {len(self.agents)} agents")
+        
+        cooperation_count = 0
+        reward_count = 0
         
         for agent1, agent2 in pairs:
             # Optional pre-decision communication exchange
@@ -53,6 +66,8 @@ class Environment:
             # Trigger decision-making for both agents
             action1 = agent1.decide_action(agent2) if hasattr(agent1, 'decide_action') else None
             action2 = agent2.decide_action(agent1) if hasattr(agent2, 'decide_action') else None
+            
+            logger.debug(f"Cycle {self.cycle_count}: Agent {agent1.agent_id} -> {action1}, Agent {agent2.agent_id} -> {action2}")
             
             # Record interaction for both agents
             if hasattr(agent1, 'record_interaction') and hasattr(agent2, 'agent_id'):
@@ -80,13 +95,32 @@ class Environment:
             # Delegated through Agent.receive_resource() for consistent validation and logging.
             # scarcity_level controls reward availability: higher scarcity = lower probability.
             if action1 == "cooperate" and action2 == "cooperate":
-                if random.random() > scarcity_level:
+                cooperation_count += 1
+                scarcity_roll = random.random()
+                logger.debug(f"Cycle {self.cycle_count}: Both cooperated! Scarcity roll: {scarcity_roll:.3f}, threshold: {scarcity_level}")
+                
+                if scarcity_roll > scarcity_level:
+                    reward_count += 1
+                    logger.debug(f"Cycle {self.cycle_count}: Granting resources to agents {agent1.agent_id} and {agent2.agent_id}")
                     if hasattr(agent1, 'receive_resource'):
                         agent1.receive_resource(1, source="cooperation_reward")
                     if hasattr(agent2, 'receive_resource'):
                         agent2.receive_resource(1, source="cooperation_reward")
+                else:
+                    logger.debug(f"Cycle {self.cycle_count}: Scarcity prevented reward (roll {scarcity_roll:.3f} <= {scarcity_level})")
         
         self.cycle_count += 1
+        
+        # Log resource distribution after step
+        resources_after = [agent.resources for agent in self.agents]
+        logger.debug(f"Cycle {self.cycle_count - 1}: Resources after step: {resources_after}")
+        logger.debug(f"Cycle {self.cycle_count - 1}: Resource stats - min: {min(resources_after)}, max: {max(resources_after)}, sum: {sum(resources_after)}")
+        logger.debug(f"Cycle {self.cycle_count - 1}: Summary - {cooperation_count} cooperation pairs, {reward_count} rewards granted")
+        
+        # Compute and log Gini coefficient for this step
+        from metrics.economics import compute_gini
+        gini = compute_gini(resources_after)
+        logger.info(f"Cycle {self.cycle_count - 1}: Gini coefficient = {gini:.4f}, Total wealth = {sum(resources_after)}, Avg wealth = {sum(resources_after)/len(resources_after):.2f}")
     
     def pair_agents(self):
         """

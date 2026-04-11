@@ -9,12 +9,24 @@ trust and interaction counts after each step.
 import random
 import sys
 import os
+import logging
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from simulation.agent import Agent
 from simulation.environment import Environment
+
+# Configure logging for debugging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('environment_debug.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 def print_relationships(agents, step_num):
@@ -55,15 +67,29 @@ def main():
     for agent in agents:
         print(f"  {agent.agent_id}: cooperation_tendency={agent.cooperation_tendency:.1f}, resources={agent.resources}")
     
+    logger.info(f"Created {len(agents)} agents")
+    
     # Initialize environment
     env = Environment(agents)
+    
+    # Import Gini computation for tracking
+    from metrics.economics import compute_gini
     
     # Run simulation for 15 steps
     num_steps = 15
     
     for step in range(num_steps):
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Starting step {step + 1}/{num_steps}")
+        logger.info(f"{'='*50}")
+        
         env.step()
         print_relationships(agents, step + 1)
+        
+        # Log resource distribution and Gini after each step
+        resources = [a.resources for a in agents]
+        gini = compute_gini(resources)
+        logger.info(f"Step {step + 1} completed - Gini: {gini:.4f}, Resources: {resources}")
     
     # Print final summary
     print(f"\n{'='*60}")
@@ -72,8 +98,21 @@ def main():
     print(f"Total steps completed: {env.cycle_count}")
     
     print("\nFinal resources:")
+    resources = []
     for agent in agents:
         print(f"  {agent.agent_id}: {agent.resources}")
+        resources.append(agent.resources)
+    
+    # Calculate and display Gini coefficient
+    from metrics.economics import compute_gini
+    final_gini = compute_gini(resources)
+    print(f"\nWealth Distribution:")
+    print(f"  Gini Coefficient: {final_gini:.4f}")
+    print(f"  Total Wealth: {sum(resources)}")
+    print(f"  Average Wealth: {sum(resources)/len(resources):.2f}")
+    print(f"  Min Wealth: {min(resources)}")
+    print(f"  Max Wealth: {max(resources)}")
+    logger.info(f"Final Gini coefficient: {final_gini:.4f}")
     
     print("\nMost trusted relationships:")
     trust_pairs = []

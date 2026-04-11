@@ -1,5 +1,8 @@
 from metrics.economics import MetricsLogger
 from simulation.config import SimulationConfig
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Simulation:
@@ -22,4 +25,5 @@ class Simulation:
                     self.world.apply_action(agent, action)
 
             resources = [a.resources for a in self.world.agents if a.alive]
-            self.metrics_logger.record(tick=self.world.time, resources=resources)
+            metrics = self.metrics_logger.record(tick=self.world.time, resources=resources)
+            logger.debug(f"Step {step}: Recorded metrics - {metrics}")
