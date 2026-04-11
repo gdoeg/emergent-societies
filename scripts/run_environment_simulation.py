@@ -104,7 +104,6 @@ def main():
         resources.append(agent.resources)
     
     # Calculate and display Gini coefficient
-    from metrics.economics import compute_gini
     final_gini = compute_gini(resources)
     print(f"\nWealth Distribution:")
     print(f"  Gini Coefficient: {final_gini:.4f}")
