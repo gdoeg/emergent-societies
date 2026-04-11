@@ -25,9 +25,13 @@ def _make_agents(config: SimulationConfig):
     else:
         agents = [Agent(i, resources=config.initial_resources) for i in range(config.num_agents)]
     
-    logger.info(f"Created {len(agents)} agents with resource distribution: {config.resource_distribution}")
-    resources = [a.resources for a in agents]
-    logger.info(f"Initial resources - min: {min(resources)}, max: {max(resources)}, avg: {sum(resources)/len(resources):.2f}")
+    logger.info("Created %d agents with resource distribution: %s", len(agents), config.resource_distribution)
+    if agents:
+        resources = [a.resources for a in agents]
+        logger.info(
+            "Initial resources - min: %d, max: %d, avg: %.2f",
+            min(resources), max(resources), sum(resources) / len(resources),
+        )
     return agents
 
 
