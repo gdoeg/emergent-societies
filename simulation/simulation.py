@@ -1,10 +1,12 @@
 from metrics.economics import MetricsLogger
+from simulation.config import SimulationConfig
 
 
 class Simulation:
-    def __init__(self, world, steps=100):
+    def __init__(self, world, steps=100, config: SimulationConfig = None):
         self.world = world
-        self.steps = steps
+        self.config = config
+        self.steps = config.num_steps if config is not None else steps
         self.metrics_logger = MetricsLogger()
 
     def run(self):
