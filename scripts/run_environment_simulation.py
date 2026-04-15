@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulation.agent import Agent
 from simulation.environment import Environment
 
+# NEW: import MetricsLogger
+from metrics.economics import compute_gini, MetricsLogger
+
 # Configure logging for debugging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -55,11 +58,11 @@ def main():
     
     # Create agents with varying cooperation tendencies
     agents = [
-        Agent("Alice", resources=10, cooperation_tendency=0.9),   # Very cooperative
-        Agent("Bob", resources=10, cooperation_tendency=0.7),     # Mostly cooperative
-        Agent("Charlie", resources=10, cooperation_tendency=0.5), # Neutral
-        Agent("Diana", resources=10, cooperation_tendency=0.3),   # Mostly defects
-        Agent("Eve", resources=10, cooperation_tendency=0.1),     # Almost always defects
+        Agent("Alice", resources=10, cooperation_tendency=0.9),
+        Agent("Bob", resources=10, cooperation_tendency=0.7),
+        Agent("Charlie", resources=10, cooperation_tendency=0.5),
+        Agent("Diana", resources=10, cooperation_tendency=0.3),
+        Agent("Eve", resources=10, cooperation_tendency=0.1),
     ]
     
     print("AGENT RELATIONSHIP & TRUST SIMULATION")
@@ -71,11 +74,11 @@ def main():
     
     # Initialize environment
     env = Environment(agents)
+
+    # NEW: initialize metrics logger
+    metrics_logger = MetricsLogger()
     
-    # Import Gini computation for tracking
-    from metrics.economics import compute_gini
-    
-    # Run simulation for 15 steps
+    # Run simulation
     num_steps = 15
     
     for step in range(num_steps):
@@ -86,12 +89,31 @@ def main():
         env.step()
         print_relationships(agents, step + 1)
         
-        # Log resource distribution and Gini after each step
+        # Resource + Gini tracking (existing)
         resources = [a.resources for a in agents]
         gini = compute_gini(resources)
         logger.info(f"Step {step + 1} completed - Gini: {gini:.4f}, Resources: {resources}")
+        
+        # 🔥 NEW: Network metrics
+        entry = metrics_logger.record(
+            tick=env.cycle_count,
+            resources=env.get_resource_distribution(),
+            graph=env.interaction_graph,
+            total_agents=len(agents),
+        )
+
+        avg_degree = entry.get('avg_degree')
+        density = entry.get('network_density')
+
+        print(f"\n📊 Network Metrics:")
+        print(f"  Avg Degree: {avg_degree}")
+        print(f"  Network Density: {density}")
+
+        # Debug: total edges
+        total_edges = sum(len(v) for v in env.interaction_graph.values())
+        print(f"  Total edges (double counted): {total_edges}")
     
-    # Print final summary
+    # Final summary
     print(f"\n{'='*60}")
     print("FINAL SUMMARY")
     print(f"{'='*60}")
@@ -103,7 +125,6 @@ def main():
         print(f"  {agent.agent_id}: {agent.resources}")
         resources.append(agent.resources)
     
-    # Calculate and display Gini coefficient
     final_gini = compute_gini(resources)
     print(f"\nWealth Distribution:")
     print(f"  Gini Coefficient: {final_gini:.4f}")
@@ -111,6 +132,7 @@ def main():
     print(f"  Average Wealth: {sum(resources)/len(resources):.2f}")
     print(f"  Min Wealth: {min(resources)}")
     print(f"  Max Wealth: {max(resources)}")
+    
     logger.info(f"Final Gini coefficient: {final_gini:.4f}")
     
     print("\nMost trusted relationships:")
