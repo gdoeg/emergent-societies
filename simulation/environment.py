@@ -79,6 +79,12 @@ class Environment:
                 agent1.record_interaction(agent2.agent_id)
             if hasattr(agent2, 'record_interaction') and hasattr(agent1, 'agent_id'):
                 agent2.record_interaction(agent1.agent_id)
+
+            # Update lightweight memory/trust for both agents based on observed behaviour
+            if hasattr(agent1, 'update_memory') and action2 is not None and hasattr(agent2, 'agent_id'):
+                agent1.update_memory(agent2.agent_id, action2)
+            if hasattr(agent2, 'update_memory') and action1 is not None and hasattr(agent1, 'agent_id'):
+                agent2.update_memory(agent1.agent_id, action1)
             
             # Update trust based on observed partner behavior
             if action1 == "cooperate" and action2 == "cooperate":

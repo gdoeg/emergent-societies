@@ -30,6 +30,7 @@ class Agent:
         self.cooperation_tendency = max(0.0, min(1.0, cooperation_tendency))  # Clamp between 0 and 1
         self.memory_log = []
         self.relationships: Dict[Any, RelationshipRecord] = {}
+        self.memory: Dict[Any, Dict[str, Any]] = {}
         
         # Maintain backwards compatibility
         self.id = agent_id
@@ -39,6 +40,11 @@ class Agent:
     # Maps trust [0.0, 1.0] to a bias of [-0.2, +0.2], keeping decisions
     # within a ±20% range of the base cooperation_tendency.
     _TRUST_BIAS_SCALE = 0.4
+
+    # Multiplier for memory-trust bias in decide_action.
+    # Maps memory trust [-1, 1] to a ±30% shift from the 50/50 baseline,
+    # giving cooperation probability in [0.2, 0.8].
+    _MEMORY_BIAS_SCALE = 0.3
 
     def get_relationship(self, other_id) -> RelationshipRecord:
         """
@@ -82,6 +88,23 @@ class Agent:
         """
         self.get_relationship(other_id)["interaction_count"] += 1
     
+    def update_memory(self, other_agent_id, outcome: str):
+        """
+        Record an interaction outcome and update trust toward the other agent.
+
+        Args:
+            other_agent_id: The agent_id of the other agent
+            outcome: "cooperate" or "defect" — the action taken by the other agent
+        """
+        if other_agent_id not in self.memory:
+            self.memory[other_agent_id] = {"trust": 0.0, "interactions": 0}
+        entry = self.memory[other_agent_id]
+        entry["interactions"] += 1
+        if outcome == "cooperate":
+            entry["trust"] = max(-1.0, min(1.0, entry["trust"] + 0.1))
+        elif outcome == "defect":
+            entry["trust"] = max(-1.0, min(1.0, entry["trust"] - 0.1))
+
     def decide_action(self, other_agent):
         """
         Randomly decide whether to cooperate or defect with another agent.
@@ -103,14 +126,22 @@ class Agent:
             self.alive = False
             return "defect"
         
-        # Simple random decision - no complex logic
-        decision = random.choice(["cooperate", "defect"])
-        
-        # Log the decision
+        # Bias decision using memory trust for the other agent, if available.
+        # trust in [-1, 1]: positive biases toward cooperate, negative toward defect.
+        # _MEMORY_BIAS_SCALE maps trust=±1 to a ±30% shift from the 50/50 baseline,
+        # preserving meaningful randomness throughout.
         other_agent_id = None
         if other_agent and hasattr(other_agent, 'agent_id'):
             other_agent_id = other_agent.agent_id
-        
+
+        if other_agent_id is not None and other_agent_id in self.memory:
+            trust = self.memory[other_agent_id]["trust"]
+            threshold = max(0.0, min(1.0, 0.5 + trust * self._MEMORY_BIAS_SCALE))
+            decision = "cooperate" if random.random() < threshold else "defect"
+        else:
+            # No memory for this agent — fall back to simple random decision
+            decision = random.choice(["cooperate", "defect"])
+
         self.memory_log.append({
             "action": "decide_action",
             "decision": decision,
