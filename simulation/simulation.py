@@ -1,10 +1,15 @@
 from metrics.economics import MetricsLogger
+from simulation.config import SimulationConfig
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Simulation:
-    def __init__(self, world, steps=100):
+    def __init__(self, world, steps=100, config: SimulationConfig = None):
         self.world = world
-        self.steps = steps
+        self.config = config
+        self.steps = config.num_steps if config is not None else steps
         self.metrics_logger = MetricsLogger()
 
     def run(self):
@@ -20,4 +25,5 @@ class Simulation:
                     self.world.apply_action(agent, action)
 
             resources = [a.resources for a in self.world.agents if a.alive]
-            self.metrics_logger.record(tick=self.world.time, resources=resources)
+            metrics = self.metrics_logger.record(tick=self.world.time, resources=resources)
+            logger.debug(f"Step {step}: Recorded metrics - {metrics}")

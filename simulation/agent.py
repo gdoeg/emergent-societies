@@ -1,3 +1,4 @@
+import random
 from typing import Any, Dict, TypedDict
 
 
@@ -83,11 +84,11 @@ class Agent:
     
     def decide_action(self, other_agent):
         """
-        Deterministically decide whether to cooperate or defect with another agent.
+        Randomly decide whether to cooperate or defect with another agent.
         
-        Decision is biased by the trust score toward the other agent: the effective
-        cooperation threshold is shifted so that higher trust makes cooperation more
-        likely and lower trust makes defection more likely.
+        Uses simple randomness to create baseline stochastic behavior for MVP.
+        This enables non-trivial dynamics (resource changes, inequality) without
+        complex strategies, memory, or LLM logic.
         
         Args:
             other_agent: The agent to interact with (or world object for backwards compatibility)
@@ -102,31 +103,19 @@ class Agent:
             self.alive = False
             return "defect"
         
-        # Get other_agent_id safely (handle both Agent objects and other types like World)
+        # Simple random decision - no complex logic
+        decision = random.choice(["cooperate", "defect"])
+        
+        # Log the decision
         other_agent_id = None
         if other_agent and hasattr(other_agent, 'agent_id'):
             other_agent_id = other_agent.agent_id
         
-        # Bias the effective cooperation threshold using trust toward the other agent.
-        # A positive bias (high trust) makes cooperation easier; negative bias (low trust)
-        # raises the effective threshold, making defection more likely.
-        trust_bias = 0.0
-        if other_agent_id is not None:
-            trust = self.get_relationship(other_agent_id)["trust"]
-            trust_bias = (trust - 0.5) * self._TRUST_BIAS_SCALE
-        
-        if self.cooperation_tendency + trust_bias >= 0.5:
-            decision = "cooperate"
-        else:
-            decision = "defect"
-        
-        # Log the decision
         self.memory_log.append({
             "action": "decide_action",
             "decision": decision,
             "other_agent_id": other_agent_id,
-            "my_resources": self.resources,
-            "my_cooperation_tendency": self.cooperation_tendency
+            "my_resources": self.resources
         })
         
         return decision
