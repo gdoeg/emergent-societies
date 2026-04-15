@@ -1,5 +1,6 @@
 import random
 import logging
+from collections import defaultdict
 
 from simulation.config import SimulationConfig
 
@@ -30,6 +31,7 @@ class Environment:
         self.cycle_count = 0
         self.resource_pool = resource_pool
         self.config = config if config is not None else SimulationConfig()
+        self.interaction_graph: defaultdict = defaultdict(set)
     
     def step(self):
         """
@@ -79,6 +81,11 @@ class Environment:
                 agent1.record_interaction(agent2.agent_id)
             if hasattr(agent2, 'record_interaction') and hasattr(agent1, 'agent_id'):
                 agent2.record_interaction(agent1.agent_id)
+
+            # Update interaction graph (undirected edge between agent1 and agent2)
+            if hasattr(agent1, 'agent_id') and hasattr(agent2, 'agent_id'):
+                self.interaction_graph[agent1.agent_id].add(agent2.agent_id)
+                self.interaction_graph[agent2.agent_id].add(agent1.agent_id)
 
             # Update lightweight memory/trust for both agents based on observed behaviour
             if hasattr(agent1, 'update_memory') and action2 is not None and hasattr(agent2, 'agent_id'):

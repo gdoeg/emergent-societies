@@ -64,12 +64,18 @@ class MetricsLogger:
         """Initialise an empty MetricsLogger."""
         self.history: List[Dict[str, Any]] = []
 
-    def record(self, tick: int, resources: List[float]) -> Dict[str, Any]:
+    def record(self, tick: int, resources: List[float], graph=None, total_agents: int = 0) -> Dict[str, Any]:
         """Compute and store metrics for one simulation tick.
 
         Args:
             tick: Current simulation step index.
             resources: Resource value for every living agent at this tick.
+            graph: Optional interaction graph (``agent_id`` → ``set`` of ids)
+                from :attr:`~simulation.environment.Environment.interaction_graph`.
+                When provided, ``avg_degree`` and ``network_density`` are included
+                in the record.
+            total_agents: Total number of agents in the simulation.  Used only
+                when *graph* is provided.
 
         Returns:
             The metrics dict that was appended to :attr:`history`.
@@ -83,6 +89,10 @@ class MetricsLogger:
             "total_wealth": total_wealth,
             "avg_wealth": avg_wealth,
         }
+        if graph is not None:
+            from metrics.metrics import average_degree, network_density
+            entry["avg_degree"] = average_degree(graph)
+            entry["network_density"] = network_density(graph, total_agents)
         self.history.append(entry)
         return entry
 
@@ -102,9 +112,12 @@ class MetricsLogger:
         Args:
             path: Filesystem path of the output ``.csv`` file.
         """
-        fieldnames = ["tick", "gini", "total_wealth", "avg_wealth"]
+        base_fields = ["tick", "gini", "total_wealth", "avg_wealth"]
+        network_fields = ["avg_degree", "network_density"]
+        has_network = any("avg_degree" in entry for entry in self.history)
+        fieldnames = base_fields + (network_fields if has_network else [])
         with open(path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(self.history)
 
