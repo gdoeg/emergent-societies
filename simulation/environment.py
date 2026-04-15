@@ -137,14 +137,14 @@ class Environment:
                 agent2.resources += 1
                 logger.debug(
                     f"Cycle {self.cycle_count}: Trade {agent1.agent_id} -> {agent2.agent_id} "
-                    f"(gap {agent1.resources + 1 - agent2.resources + 1})"
+                    f"(gap {agent1.resources - agent2.resources})"
                 )
             elif agent2.resources > agent1.resources + trade_threshold:
                 agent2.resources -= 1
                 agent1.resources += 1
                 logger.debug(
                     f"Cycle {self.cycle_count}: Trade {agent2.agent_id} -> {agent1.agent_id} "
-                    f"(gap {agent2.resources + 1 - agent1.resources + 1})"
+                    f"(gap {agent2.resources - agent1.resources})"
                 )
 
         self.cycle_count += 1
