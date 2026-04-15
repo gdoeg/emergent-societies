@@ -31,6 +31,8 @@ class SimulationConfig:
     resource_distribution: str = "uniform"
     scarcity_level: float = 0.5
     communication_enabled: bool = True
+    trade_threshold: int = 5
+    top_n_leaders: int = 3
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -62,6 +64,12 @@ class SimulationConfig:
         if not 0.0 <= self.scarcity_level <= 1.0:
             raise ValueError("scarcity_level must be within [0.0, 1.0]")
 
+        if self.trade_threshold < 0:
+            raise ValueError("trade_threshold must be non-negative")
+
+        if self.top_n_leaders < 1:
+            raise ValueError("top_n_leaders must be at least 1")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -71,6 +79,8 @@ class SimulationConfig:
             "resource_distribution": self.resource_distribution,
             "scarcity_level": self.scarcity_level,
             "communication_enabled": self.communication_enabled,
+            "trade_threshold": self.trade_threshold,
+            "top_n_leaders": self.top_n_leaders,
         }
 
     @classmethod
@@ -99,5 +109,7 @@ class SimulationConfig:
             f"initial_resources={self.initial_resources}, "
             f"resource_distribution={self.resource_distribution!r}, "
             f"scarcity_level={self.scarcity_level}, "
-            f"communication_enabled={self.communication_enabled})"
+            f"communication_enabled={self.communication_enabled}, "
+            f"trade_threshold={self.trade_threshold}, "
+            f"top_n_leaders={self.top_n_leaders})"
         )

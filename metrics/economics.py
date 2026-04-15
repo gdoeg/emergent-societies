@@ -42,6 +42,22 @@ def compute_gini(values: List[float]) -> float:
     return gini_numerator / (n * total)
 
 
+def compute_power(agent) -> float:
+    """Compute the power score for an agent.
+
+    Power combines material wealth (resources) with social knowledge
+    (number of agents in memory), reflecting both economic and
+    informational dominance.
+
+    Args:
+        agent: An Agent instance with ``resources`` and ``memory`` attributes.
+
+    Returns:
+        Power score as ``agent.resources + len(agent.memory)``.
+    """
+    return agent.resources + len(agent.memory)
+
+
 class MetricsLogger:
     """Accumulates per-tick economic metrics and exports them to JSONL or CSV.
 
@@ -65,7 +81,7 @@ class MetricsLogger:
         """Initialise an empty MetricsLogger."""
         self.history: List[Dict[str, Any]] = []
 
-    def record(self, tick: int, resources: List[float], graph: Optional[DefaultDict[Any, Set]] = None, total_agents: int = 0) -> Dict[str, Any]:
+    def record(self, tick: int, resources: List[float], graph: Optional[DefaultDict[Any, Set]] = None, total_agents: int = 0, avg_power: Optional[float] = None, max_power: Optional[float] = None) -> Dict[str, Any]:
         """Compute and store metrics for one simulation tick.
 
         Args:
@@ -77,6 +93,8 @@ class MetricsLogger:
                 in the record.
             total_agents: Total number of agents in the simulation.  Used only
                 when *graph* is provided.
+            avg_power: Optional average power across all living agents.
+            max_power: Optional maximum power among all living agents.
 
         Returns:
             The metrics dict that was appended to :attr:`history`.
@@ -94,6 +112,10 @@ class MetricsLogger:
             from metrics.metrics import average_degree, network_density
             entry["avg_degree"] = average_degree(graph)
             entry["network_density"] = network_density(graph, total_agents)
+        if avg_power is not None:
+            entry["avg_power"] = avg_power
+        if max_power is not None:
+            entry["max_power"] = max_power
         self.history.append(entry)
         return entry
 
@@ -115,8 +137,10 @@ class MetricsLogger:
         """
         base_fields = ["tick", "gini", "total_wealth", "avg_wealth"]
         network_fields = ["avg_degree", "network_density"]
+        power_fields = ["avg_power", "max_power"]
         has_network = any("avg_degree" in entry for entry in self.history)
-        fieldnames = base_fields + (network_fields if has_network else [])
+        has_power = any("avg_power" in entry for entry in self.history)
+        fieldnames = base_fields + (network_fields if has_network else []) + (power_fields if has_power else [])
         with open(path, "w", newline="", encoding="utf-8") as fh:
             # extrasaction="ignore" is intentional: history entries may contain
             # optional network fields (avg_degree, network_density) only when a
