@@ -1,6 +1,7 @@
 import random
 import logging
 from collections import defaultdict
+from typing import Any
 
 from simulation.config import SimulationConfig
 
@@ -31,7 +32,7 @@ class Environment:
         self.cycle_count = 0
         self.resource_pool = resource_pool
         self.config = config if config is not None else SimulationConfig()
-        self.interaction_graph: defaultdict = defaultdict(set)
+        self.interaction_graph: defaultdict[Any, set] = defaultdict(set)
     
     def step(self):
         """

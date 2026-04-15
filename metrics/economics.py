@@ -6,7 +6,8 @@ distribution across simulation ticks.
 
 import csv
 import json
-from typing import Dict, List, Any
+from collections import defaultdict
+from typing import DefaultDict, Dict, List, Any, Optional, Set
 
 
 def compute_gini(values: List[float]) -> float:
@@ -64,7 +65,7 @@ class MetricsLogger:
         """Initialise an empty MetricsLogger."""
         self.history: List[Dict[str, Any]] = []
 
-    def record(self, tick: int, resources: List[float], graph=None, total_agents: int = 0) -> Dict[str, Any]:
+    def record(self, tick: int, resources: List[float], graph: Optional[DefaultDict[Any, Set]] = None, total_agents: int = 0) -> Dict[str, Any]:
         """Compute and store metrics for one simulation tick.
 
         Args:
@@ -117,6 +118,9 @@ class MetricsLogger:
         has_network = any("avg_degree" in entry for entry in self.history)
         fieldnames = base_fields + (network_fields if has_network else [])
         with open(path, "w", newline="", encoding="utf-8") as fh:
+            # extrasaction="ignore" is intentional: history entries may contain
+            # optional network fields (avg_degree, network_density) only when a
+            # graph was provided. Rows without those fields simply omit them.
             writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(self.history)
