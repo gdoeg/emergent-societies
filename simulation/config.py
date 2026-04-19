@@ -42,6 +42,8 @@ class SimulationConfig:
         llm_api_base_url: Base URL for the chat-completion API.  Change this
             to use any OpenAI-compatible provider
             (default: ``"https://api.openai.com/v1"``).
+        llm_timeout: HTTP request timeout in seconds for LLM API calls
+            (default: ``15``).
     """
 
     num_agents: int = 100
@@ -58,6 +60,7 @@ class SimulationConfig:
     policy_type: str = "deterministic"
     llm_model: str = "gpt-4o-mini"
     llm_api_base_url: str = "https://api.openai.com/v1"
+    llm_timeout: int = 15
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -108,6 +111,9 @@ class SimulationConfig:
                 f"{sorted(valid_policy_types)}, got {self.policy_type!r}"
             )
 
+        if self.llm_timeout < 1:
+            raise ValueError("llm_timeout must be at least 1 second")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -125,6 +131,7 @@ class SimulationConfig:
             "policy_type": self.policy_type,
             "llm_model": self.llm_model,
             "llm_api_base_url": self.llm_api_base_url,
+            "llm_timeout": self.llm_timeout,
         }
 
     @classmethod
@@ -161,5 +168,6 @@ class SimulationConfig:
             f"enable_elite_advantage={self.enable_elite_advantage}, "
             f"policy_type={self.policy_type!r}, "
             f"llm_model={self.llm_model!r}, "
-            f"llm_api_base_url={self.llm_api_base_url!r})"
+            f"llm_api_base_url={self.llm_api_base_url!r}, "
+            f"llm_timeout={self.llm_timeout})"
         )

@@ -1,5 +1,12 @@
 from typing import Any, Dict, TypedDict
 
+from simulation.policies.deterministic_policy import DeterministicPolicy
+
+# Shared default policy instance — policies are stateless with respect to
+# individual agents, so a single instance can safely be reused across all
+# agents that do not receive an explicit policy at construction time.
+_DEFAULT_POLICY = DeterministicPolicy()
+
 
 class RelationshipRecord(TypedDict):
     """Per-partner relationship state stored in Agent.relationships."""
@@ -42,11 +49,9 @@ class Agent:
         self.id = agent_id
         self.alive = True
 
-        # Assign policy — import here to avoid circular imports at module level.
-        if policy is None:
-            from simulation.policies.deterministic_policy import DeterministicPolicy
-            policy = DeterministicPolicy()
-        self.policy = policy
+        # Assign policy — falls back to the module-level shared default so
+        # that no extra allocation is needed for the common case.
+        self.policy = policy if policy is not None else _DEFAULT_POLICY
     
     def get_relationship(self, other_id) -> RelationshipRecord:
         """

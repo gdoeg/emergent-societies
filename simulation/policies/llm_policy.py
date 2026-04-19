@@ -43,10 +43,12 @@ class LLMPolicy(AgentPolicy):
         self,
         model: str = _DEFAULT_MODEL,
         api_base_url: str = _DEFAULT_API_BASE_URL,
+        timeout: int = 15,
         policy_logger=None,
     ) -> None:
         self.model = model
         self.api_base_url = api_base_url.rstrip("/")
+        self.timeout = timeout
         self._policy_logger = policy_logger
 
     # ------------------------------------------------------------------
@@ -223,7 +225,7 @@ class LLMPolicy(AgentPolicy):
             {
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 10,
+                "max_tokens": 20,
                 "temperature": 0.0,
             }
         ).encode("utf-8")
@@ -238,7 +240,7 @@ class LLMPolicy(AgentPolicy):
             method="POST",
         )
 
-        with urllib_request.urlopen(req, timeout=15) as resp:  # noqa: S310
+        with urllib_request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
             body = json.loads(resp.read().decode("utf-8"))
 
         return body["choices"][0]["message"]["content"]
@@ -250,9 +252,11 @@ class LLMPolicy(AgentPolicy):
     def _parse_response(self, text: str) -> str:
         """Extract ``"cooperate"`` or ``"defect"`` from *text*.
 
-        The parser is intentionally lenient — it checks whether the response
-        contains either keyword (case-insensitive) and returns the first
-        match.  Falls back to ``_FALLBACK_ACTION`` when neither is found.
+        The parser first attempts a strict word-boundary match so that
+        responses such as ``"I will not cooperate, I will defect"`` resolve to
+        ``"defect"`` rather than the first substring hit.  It falls back to a
+        simple substring scan when no word-boundary match is found, and
+        finally returns ``_FALLBACK_ACTION`` when neither keyword is present.
 
         Args:
             text: Raw text returned by the LLM.
@@ -260,11 +264,17 @@ class LLMPolicy(AgentPolicy):
         Returns:
             ``"cooperate"`` or ``"defect"``.
         """
+        import re
+
         normalised = text.strip().lower()
-        if "cooperate" in normalised:
-            return "cooperate"
-        if "defect" in normalised:
-            return "defect"
+
+        # Try to find the *last* occurrence of either keyword as a whole word.
+        # "last" is used because LLMs sometimes prepend filler text and end
+        # with the actual decision.
+        matches = list(re.finditer(r"\b(cooperate|defect)\b", normalised))
+        if matches:
+            return matches[-1].group(1)
+
         logger.warning(
             "LLMPolicy: could not parse response %r — defaulting to '%s'",
             text,

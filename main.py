@@ -36,7 +36,7 @@ def _make_policy(config: SimulationConfig):
             config.llm_model,
             config.llm_api_base_url,
         )
-        return LLMPolicy(model=config.llm_model, api_base_url=config.llm_api_base_url)
+        return LLMPolicy(model=config.llm_model, api_base_url=config.llm_api_base_url, timeout=config.llm_timeout)
     logger.info("Using DeterministicPolicy")
     return DeterministicPolicy()
 
