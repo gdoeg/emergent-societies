@@ -8,14 +8,17 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-green-50 px-4 py-8 md:px-8">
-      <div className="max-w-7xl mx-auto">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold text-green-900">
+    <div className="relative min-h-screen px-5 py-12 md:px-10 md:py-14">
+      <div className="max-w-6xl mx-auto relative z-10">
+        <header className="mb-10 md:mb-14 rounded-2xl border border-white/60 bg-white/70 backdrop-blur-sm shadow-lg px-6 py-6 md:px-8 md:py-7">
+          <p className="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-green-700">
+            Live Dashboard
+          </p>
+          <h1 className="text-4xl font-bold tracking-tight text-green-800">
             Emergent Societies
           </h1>
-          <p className="text-green-600 mt-1 text-sm">
-            Real-time simulation dashboard
+          <p className="text-green-600 mt-3 text-base">
+            Real-time economic simulation
           </p>
         </header>
         {children}
