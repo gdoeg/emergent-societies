@@ -139,8 +139,8 @@ class Agent:
             threshold = max(0.0, min(1.0, 0.5 + trust * self._MEMORY_BIAS_SCALE))
             decision = "cooperate" if random.random() < threshold else "defect"
         else:
-            # No memory for this agent — fall back to simple random decision
-            decision = random.choice(["cooperate", "defect"])
+            # No memory for this agent — fall back to cooperation_tendency
+            decision = "cooperate" if random.random() < self.cooperation_tendency else "defect"
 
         self.memory_log.append({
             "action": "decide_action",
