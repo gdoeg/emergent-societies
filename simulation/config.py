@@ -18,21 +18,34 @@ class SimulationConfig:
             ``"random"`` randomises each agent's starting resources in the
             range ``[1, initial_resources * 2]``.
         scarcity_level: Float in ``[0.0, 1.0]`` controlling resource
-            availability.  Higher values mean fewer cooperative rewards are
-            granted by the environment (probability of reward = ``1 -
-            scarcity_level``).
+            availability.  Higher values reduce cooperative rewards and apply
+            per-step resource decay to all agents.
         communication_enabled: When ``False``, agents skip the communication
             step before deciding their action.
+        trade_threshold: Minimum resource gap required before redistribution
+            is triggered between a pair of agents.
+        redistribution_strength: Float in ``[0.0, 1.0]`` controlling how much
+            of the resource gap is redistributed.  ``0.0`` disables
+            redistribution entirely; ``1.0`` fully equalises each pair.
+        elite_advantage_factor: Multiplier (>= 1.0) applied to resource gains
+            for the wealthier agent when ``enable_elite_advantage`` is
+            ``True``.
+        enable_elite_advantage: When ``True``, the richer agent in a pairwise
+            interaction receives amplified cooperation rewards and loses fewer
+            resources during redistribution.
     """
 
     num_agents: int = 100
     num_steps: int = 500
     initial_resources: int = 10
     resource_distribution: str = "uniform"
-    scarcity_level: float = 0.5
+    scarcity_level: float = 0.2
     communication_enabled: bool = True
     trade_threshold: int = 5
     top_n_leaders: int = 3
+    redistribution_strength: float = 0.5
+    elite_advantage_factor: float = 1.2
+    enable_elite_advantage: bool = False
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -67,6 +80,12 @@ class SimulationConfig:
         if self.trade_threshold < 0:
             raise ValueError("trade_threshold must be non-negative")
 
+        if not 0.0 <= self.redistribution_strength <= 1.0:
+            raise ValueError("redistribution_strength must be within [0.0, 1.0]")
+
+        if self.elite_advantage_factor < 1.0:
+            raise ValueError("elite_advantage_factor must be >= 1.0")
+
         if self.top_n_leaders < 1:
             raise ValueError("top_n_leaders must be at least 1")
 
@@ -81,6 +100,9 @@ class SimulationConfig:
             "communication_enabled": self.communication_enabled,
             "trade_threshold": self.trade_threshold,
             "top_n_leaders": self.top_n_leaders,
+            "redistribution_strength": self.redistribution_strength,
+            "elite_advantage_factor": self.elite_advantage_factor,
+            "enable_elite_advantage": self.enable_elite_advantage,
         }
 
     @classmethod
@@ -111,5 +133,8 @@ class SimulationConfig:
             f"scarcity_level={self.scarcity_level}, "
             f"communication_enabled={self.communication_enabled}, "
             f"trade_threshold={self.trade_threshold}, "
-            f"top_n_leaders={self.top_n_leaders})"
+            f"top_n_leaders={self.top_n_leaders}, "
+            f"redistribution_strength={self.redistribution_strength}, "
+            f"elite_advantage_factor={self.elite_advantage_factor}, "
+            f"enable_elite_advantage={self.enable_elite_advantage})"
         )
