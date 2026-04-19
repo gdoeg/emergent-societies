@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, Optional
 from urllib import request as urllib_request
 from urllib.error import URLError
@@ -264,8 +265,6 @@ class LLMPolicy(AgentPolicy):
         Returns:
             ``"cooperate"`` or ``"defect"``.
         """
-        import re
-
         normalised = text.strip().lower()
 
         # Try to find the *last* occurrence of either keyword as a whole word.

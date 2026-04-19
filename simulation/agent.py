@@ -1,5 +1,8 @@
 from typing import Any, Dict, TypedDict
 
+# DeterministicPolicy (and all AgentPolicy subclasses) must never import from
+# simulation.agent to avoid a circular dependency.  The dependency direction is
+# always: agent -> policy, never policy -> agent.
 from simulation.policies.deterministic_policy import DeterministicPolicy
 
 # Shared default policy instance — policies are stateless with respect to
