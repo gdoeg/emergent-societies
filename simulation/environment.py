@@ -37,15 +37,32 @@ class Environment:
     def step(self):
         """
         Execute one simulation cycle:
+        - Apply per-step resource decay based on scarcity_level
         - Randomly pair agents
         - Optionally exchange intent signals (gated by communication_enabled)
         - Trigger decision-making interactions
         - If both agents cooperate, attempt to grant a resource reward
-          (probability reduced by scarcity_level)
+          (probability reduced by scarcity_level; richer agent receives an
+          amplified reward when enable_elite_advantage is True)
+        - Redistribute resources between pairs using redistribution_strength
+          (only when gap exceeds trade_threshold)
         - Increment cycle_count
         """
         communication_enabled = self.config.communication_enabled
         scarcity_level = self.config.scarcity_level
+        redistribution_strength = self.config.redistribution_strength
+        trade_threshold = self.config.trade_threshold
+        elite_advantage_factor = self.config.elite_advantage_factor
+        enable_elite_advantage = self.config.enable_elite_advantage
+
+        # Per-step scarcity decay: each agent loses a small fraction of a
+        # resource unit proportional to scarcity_level.  A decay_factor of 0.1
+        # means agents lose at most 0.1 resources per step at full scarcity.
+        _DECAY_FACTOR = 0.1
+        if scarcity_level > 0.0:
+            decay = scarcity_level * _DECAY_FACTOR
+            for agent in self.agents:
+                agent.resources = max(0.0, agent.resources - decay)
 
         # Log resource distribution before step (guarded so list build is skipped when DEBUG is off)
         if logger.isEnabledFor(logging.DEBUG):
@@ -113,6 +130,8 @@ class Environment:
             # If both agents cooperate, grant each a resource reward from the environment.
             # Delegated through Agent.receive_resource() for consistent validation and logging.
             # scarcity_level controls reward availability: higher scarcity = lower probability.
+            # When enable_elite_advantage is True, the wealthier agent receives a bonus on
+            # top of the base reward, scaled by elite_advantage_factor.
             if action1 == "cooperate" and action2 == "cooperate":
                 cooperation_count += 1
                 scarcity_roll = random.random()
@@ -120,31 +139,73 @@ class Environment:
                 
                 if scarcity_roll > scarcity_level:
                     reward_count += 1
+                    base_reward = 1
+
+                    if enable_elite_advantage:
+                        # Determine which agent is wealthier and apply the advantage factor
+                        # to their reward.  A bonus > 1.0 (factor > 2.0) is handled by
+                        # granting floor(bonus) guaranteed extra units plus a fractional
+                        # probability of one more, so the expected extra reward equals bonus.
+                        bonus = elite_advantage_factor - 1.0  # e.g. 0.2 for factor=1.2
+                        extra = int(bonus) + (1 if random.random() < (bonus % 1) else 0)
+                        if agent1.resources >= agent2.resources:
+                            reward1 = base_reward + extra
+                            reward2 = base_reward
+                        else:
+                            reward1 = base_reward
+                            reward2 = base_reward + extra
+                    else:
+                        reward1 = reward2 = base_reward
+
                     logger.debug(f"Cycle {self.cycle_count}: Granting resources to agents {agent1.agent_id} and {agent2.agent_id}")
                     if hasattr(agent1, 'receive_resource'):
-                        agent1.receive_resource(1, source="cooperation_reward")
+                        agent1.receive_resource(reward1, source="cooperation_reward")
                     if hasattr(agent2, 'receive_resource'):
-                        agent2.receive_resource(1, source="cooperation_reward")
+                        agent2.receive_resource(reward2, source="cooperation_reward")
                 else:
                     logger.debug(f"Cycle {self.cycle_count}: Scarcity prevented reward (roll {scarcity_roll:.3f} <= {scarcity_level})")
         
-        # Trade: redistribute 1 unit from the richer agent to the poorer one
-        # when the resource gap exceeds trade_threshold.
-        trade_threshold = self.config.trade_threshold
+        # Redistribution: transfer resources from the richer agent to the poorer one
+        # only when the gap exceeds trade_threshold.  The transfer amount is scaled by
+        # redistribution_strength so that 0.0 disables redistribution entirely and 1.0
+        # fully halves the gap each step.  When enable_elite_advantage is True, the
+        # richer agent effectively loses less by dividing the transfer by
+        # elite_advantage_factor.
         for agent1, agent2 in pairs:
-            if agent1.resources > agent2.resources + trade_threshold:
-                agent1.resources -= 1
-                agent2.resources += 1
+            diff = agent1.resources - agent2.resources
+            if abs(diff) <= trade_threshold or redistribution_strength == 0.0:
+                continue
+
+            transfer = redistribution_strength * (abs(diff) / 2.0)
+
+            if enable_elite_advantage:
+                # Elite agents (more resources) retain a larger share: dividing
+                # the transfer by elite_advantage_factor reduces the amount taken
+                # from the richer side.  This interacts multiplicatively with
+                # redistribution_strength; at very low strengths the combined
+                # effect can be negligible, which is intentional.
+                transfer = transfer / elite_advantage_factor
+
+            if transfer == 0.0:
+                continue
+
+            if diff > 0:
+                # agent1 is richer — transfer from agent1 to agent2
+                actual = min(transfer, agent1.resources)
+                agent1.resources -= actual
+                agent2.resources += actual
                 logger.debug(
-                    f"Cycle {self.cycle_count}: Trade {agent1.agent_id} -> {agent2.agent_id} "
-                    f"(gap {agent1.resources - agent2.resources})"
+                    f"Cycle {self.cycle_count}: Redistribution {agent1.agent_id} -> {agent2.agent_id} "
+                    f"amount={actual:.2f} (gap={diff:.2f})"
                 )
-            elif agent2.resources > agent1.resources + trade_threshold:
-                agent2.resources -= 1
-                agent1.resources += 1
+            else:
+                # agent2 is richer — transfer from agent2 to agent1
+                actual = min(transfer, agent2.resources)
+                agent2.resources -= actual
+                agent1.resources += actual
                 logger.debug(
-                    f"Cycle {self.cycle_count}: Trade {agent2.agent_id} -> {agent1.agent_id} "
-                    f"(gap {agent2.resources - agent1.resources})"
+                    f"Cycle {self.cycle_count}: Redistribution {agent2.agent_id} -> {agent1.agent_id} "
+                    f"amount={actual:.2f} (gap={-diff:.2f})"
                 )
 
         self.cycle_count += 1
