@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from statistics import mean
 from typing import Any, Dict, Optional
 from urllib import request as urllib_request
 from urllib.error import URLError
@@ -73,6 +74,10 @@ class LLMPolicy(AgentPolicy):
         prompt = self._build_prompt(agent, context)
         raw_response: Optional[str] = None
         action = _FALLBACK_ACTION
+        other_agent_id = (
+            context.agent_id if context is not None and hasattr(context, "agent_id") else None
+        )
+        prompt_summary = self._build_prompt_summary(agent, context)
 
         try:
             raw_response = self._call_llm(prompt)
@@ -91,7 +96,9 @@ class LLMPolicy(AgentPolicy):
             "action": "decide_action",
             "policy": "llm",
             "agent_id": agent.agent_id,
+            "other_agent_id": other_agent_id,
             "prompt": prompt,
+            "prompt_summary": prompt_summary,
             "raw_response": raw_response,
             "decision": action,
             "my_resources": agent.resources,
@@ -127,23 +134,66 @@ class LLMPolicy(AgentPolicy):
         Returns:
             A multi-line prompt string.
         """
+        agent_state_section = self._agent_state_section(agent)
         opponent_section = self._opponent_section(agent, context)
+        relationship_section = self._relationship_section(agent, context)
         history_section = self._history_section(agent, context)
+        environment_section = self._environment_section(agent)
 
         return (
-            "You are an agent in a simulated society where agents cooperate or "
-            "defect in pairwise interactions.\n\n"
-            f"Your current state:\n"
-            f"  - Resources: {agent.resources}\n"
-            f"  - Cooperation tendency: {agent.cooperation_tendency:.2f}\n"
-            f"\n"
+            "You are making one strategic choice in a simulated society with pairwise interactions.\n\n"
+            f"{agent_state_section}"
             f"{opponent_section}"
+            f"{relationship_section}"
             f"\n"
             f"{history_section}"
             f"\n"
+            f"{environment_section}"
+            f"\n"
+            "Incentives:\n"
+            "  - Cooperation can increase total wealth when both sides cooperate, but you may be exploited if the other defects.\n"
+            "  - Defection can protect your own position in the short term, but repeated defection reduces trust and can damage future gains.\n"
+            "\n"
             "Based on this context, decide your next action.\n"
             "Respond with ONLY one word: cooperate or defect"
         )
+
+    def _agent_state_section(self, agent) -> str:
+        """Return a prompt section describing the deciding agent's own state."""
+        resources = agent.resources
+        rel_wealth = self._relative_wealth_section(agent)
+        return (
+            "Your state:\n"
+            f"  - Current resources: {resources}\n"
+            f"  - Relative wealth: {rel_wealth}\n"
+            f"  - Baseline cooperation tendency: {agent.cooperation_tendency:.2f}\n"
+            "\n"
+        )
+
+    def _relative_wealth_section(self, agent) -> str:
+        """Describe wealth relative to peers when population data is available."""
+        resources = getattr(agent, "resources", None)
+        snapshot = getattr(agent, "population_resources_snapshot", None)
+        if resources is None or not snapshot:
+            return "unknown"
+
+        avg_resources = mean(snapshot)
+        if avg_resources == 0:
+            return "at population average"
+
+        ratio = resources / avg_resources
+        if ratio >= 1.5:
+            label = "well above average"
+        elif ratio >= 1.1:
+            label = "above average"
+        elif ratio <= 0.7:
+            label = "well below average"
+        elif ratio <= 0.9:
+            label = "below average"
+        else:
+            label = "near average"
+
+        return f"{label} (you={resources:.2f}, avg={avg_resources:.2f}, ratio={ratio:.2f})"
 
     def _opponent_section(self, agent, context) -> str:
         """Return a prompt section describing the opponent."""
@@ -151,23 +201,42 @@ class LLMPolicy(AgentPolicy):
             return "Opponent state: unknown\n"
 
         opp_id = context.agent_id
-        trust_score: Optional[float] = None
-
-        # Look up trust from agent's memory (range [-1, 1])
-        if opp_id in agent.memory:
-            trust_score = agent.memory[opp_id]["trust"]
-        # Also check relationships dict (range [0, 1])
-        elif opp_id in agent.relationships:
-            trust_score = agent.relationships[opp_id]["trust"]
 
         opp_resources = getattr(context, "resources", "unknown")
-        trust_str = (
-            f"{trust_score:.2f}" if trust_score is not None else "no prior history"
-        )
+        gap = "unknown"
+        if isinstance(opp_resources, (int, float)):
+            gap = f"{agent.resources - opp_resources:.2f}"
         return (
             f"Opponent (agent {opp_id}) state:\n"
             f"  - Resources: {opp_resources}\n"
-            f"  - Your trust toward them: {trust_str}\n"
+            f"  - Resource gap (you - opponent): {gap}\n"
+        )
+
+    def _relationship_section(self, agent, context) -> str:
+        """Return trust and interaction context for the opponent."""
+        if context is None or not hasattr(context, "agent_id"):
+            return "Relationship context: unavailable\n"
+
+        opp_id = context.agent_id
+        memory_entry = agent.memory.get(opp_id, {})
+        relationship_entry = agent.relationships.get(opp_id, {})
+
+        trust_score = memory_entry.get("trust")
+        if trust_score is None:
+            trust_score = relationship_entry.get("trust")
+
+        interactions = memory_entry.get("interactions")
+        if interactions is None:
+            interactions = relationship_entry.get("interaction_count", 0)
+
+        last_outcome = memory_entry.get("last_outcome", "none")
+
+        trust_str = f"{trust_score:.2f}" if trust_score is not None else "no prior history"
+        return (
+            "Relationship context:\n"
+            f"  - Your trust toward opponent: {trust_str}\n"
+            f"  - Past interactions with opponent: {interactions}\n"
+            f"  - Last observed opponent action: {last_outcome}\n"
         )
 
     def _history_section(self, agent, context) -> str:
@@ -176,27 +245,51 @@ class LLMPolicy(AgentPolicy):
             return "Interaction history with this agent: none\n"
 
         opp_id = context.agent_id
-        relevant = [
-            entry
-            for entry in agent.memory_log
-            if entry.get("other_agent_id") == opp_id
-            and entry.get("action") == "decide_action"
-        ]
+        memory_entry = agent.memory.get(opp_id, {})
+        interactions = memory_entry.get("interactions", 0)
+        observed_cooperate = memory_entry.get("cooperated", 0)
+        observed_defect = memory_entry.get("defected", 0)
 
-        if not relevant:
+        if interactions == 0:
             return f"Interaction history with agent {opp_id}: none\n"
 
-        # Summarise the last 5 interactions
-        recent = relevant[-5:]
-        cooperate_count = sum(1 for e in recent if e.get("decision") == "cooperate")
-        defect_count = len(recent) - cooperate_count
         return (
-            f"Recent interaction history with agent {opp_id} "
-            f"(last {len(recent)} interactions):\n"
-            f"  - Times you cooperated: {cooperate_count}\n"
-            f"  - Times you defected: {defect_count}\n"
+            f"Memory summary with agent {opp_id}:\n"
+            f"  - Opponent cooperated {observed_cooperate} times\n"
+            f"  - Opponent defected {observed_defect} times\n"
+            f"  - Total interactions: {interactions}\n"
         )
 
+    def _environment_section(self, agent) -> str:
+        """Return environment settings relevant to incentives."""
+        context = getattr(agent, "simulation_context", {})
+        scarcity = context.get("scarcity_level", "unknown")
+        redistribution = context.get("redistribution_strength", "unknown")
+        elite_enabled = context.get("enable_elite_advantage", "unknown")
+        return (
+            "Environment conditions:\n"
+            f"  - scarcity_level: {scarcity}\n"
+            f"  - redistribution_strength: {redistribution}\n"
+            f"  - elite_advantage_enabled: {elite_enabled}\n"
+        )
+
+    def _build_prompt_summary(self, agent, context) -> Dict[str, Any]:
+        """Build a compact summary for downstream decision analytics logs."""
+        opponent_id = context.agent_id if context is not None and hasattr(context, "agent_id") else None
+        memory_entry = agent.memory.get(opponent_id, {}) if opponent_id is not None else {}
+        return {
+            "agent_resources": agent.resources,
+            "relative_wealth": self._relative_wealth_section(agent),
+            "opponent_id": opponent_id,
+            "opponent_resources": getattr(context, "resources", None) if context is not None else None,
+            "trust": memory_entry.get("trust"),
+            "interactions": memory_entry.get("interactions", 0),
+            "last_outcome": memory_entry.get("last_outcome"),
+            "cooperated": memory_entry.get("cooperated", 0),
+            "defected": memory_entry.get("defected", 0),
+            "environment": getattr(agent, "simulation_context", {}),
+        
+        }
     # ------------------------------------------------------------------
     # LLM call
     # ------------------------------------------------------------------
@@ -216,7 +309,10 @@ class LLMPolicy(AgentPolicy):
             ValueError: If the response cannot be parsed.
         """
         api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
-        if not api_key:
+        is_local = self.api_base_url.startswith("http://localhost") or self.api_base_url.startswith(
+            "http://127.0.0.1"
+        )
+        if not api_key and not is_local:
             raise EnvironmentError(
                 "No LLM API key found. Set the OPENAI_API_KEY or LLM_API_KEY "
                 "environment variable."
@@ -231,13 +327,14 @@ class LLMPolicy(AgentPolicy):
             }
         ).encode("utf-8")
 
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
         req = urllib_request.Request(
             f"{self.api_base_url}/chat/completions",
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
+            headers=headers,
             method="POST",
         )
 

@@ -5,11 +5,6 @@ from typing import Any, Dict, TypedDict
 # always: agent -> policy, never policy -> agent.
 from simulation.policies.deterministic_policy import DeterministicPolicy
 
-# Shared default policy instance — policies are stateless with respect to
-# individual agents, so a single instance can safely be reused across all
-# agents that do not receive an explicit policy at construction time.
-_DEFAULT_POLICY = DeterministicPolicy()
-
 
 class RelationshipRecord(TypedDict):
     """Per-partner relationship state stored in Agent.relationships."""
@@ -52,9 +47,14 @@ class Agent:
         self.id = agent_id
         self.alive = True
 
-        # Assign policy — falls back to the module-level shared default so
-        # that no extra allocation is needed for the common case.
-        self.policy = policy if policy is not None else _DEFAULT_POLICY
+        # Keep policy state isolated per agent by assigning a distinct policy
+        # instance whenever one is not explicitly provided.
+        self.policy = policy if policy is not None else DeterministicPolicy()
+
+        # Environment-derived context injected by Environment; used by policies
+        # to condition decisions without requiring shared policy state.
+        self.simulation_context: Dict[str, Any] = {}
+        self.population_resources_snapshot = []
     
     def get_relationship(self, other_id) -> RelationshipRecord:
         """
@@ -107,13 +107,25 @@ class Agent:
             outcome: "cooperate" or "defect" — the action taken by the other agent
         """
         if other_agent_id not in self.memory:
-            self.memory[other_agent_id] = {"trust": 0.0, "interactions": 0}
+            self.memory[other_agent_id] = {
+                "trust": 0.0,
+                "interactions": 0,
+                "cooperated": 0,
+                "defected": 0,
+                "last_outcome": None,
+            }
         entry = self.memory[other_agent_id]
+        entry.setdefault("cooperated", 0)
+        entry.setdefault("defected", 0)
+        entry.setdefault("last_outcome", None)
         entry["interactions"] += 1
         if outcome == "cooperate":
             entry["trust"] = max(-1.0, min(1.0, entry["trust"] + 0.1))
+            entry["cooperated"] += 1
         elif outcome == "defect":
             entry["trust"] = max(-1.0, min(1.0, entry["trust"] - 0.1))
+            entry["defected"] += 1
+        entry["last_outcome"] = outcome
 
     def decide_action(self, context):
         """Decide whether to cooperate or defect by delegating to :attr:`policy`.

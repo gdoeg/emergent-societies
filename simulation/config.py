@@ -38,10 +38,10 @@ class SimulationConfig:
             ``"llm"`` delegates decisions to an LLM via the OpenAI-compatible
             chat-completion API.
         llm_model: LLM model name used when ``policy_type`` is ``"llm"``
-            (default: ``"gpt-4o-mini"``).
+            (default: ``"llama3"``).
         llm_api_base_url: Base URL for the chat-completion API.  Change this
             to use any OpenAI-compatible provider
-            (default: ``"https://api.openai.com/v1"``).
+            (default: ``"http://localhost:11434/v1"``).
         llm_timeout: HTTP request timeout in seconds for LLM API calls
             (default: ``15``).
     """
@@ -57,9 +57,9 @@ class SimulationConfig:
     redistribution_strength: float = 0.5
     elite_advantage_factor: float = 1.2
     enable_elite_advantage: bool = False
-    policy_type: str = "deterministic"
-    llm_model: str = "gpt-4o-mini"
-    llm_api_base_url: str = "https://api.openai.com/v1"
+    policy_type: str = "llm"
+    llm_model: str = "llama3"
+    llm_api_base_url: str = "http://localhost:11434/v1"
     llm_timeout: int = 15
 
     def __post_init__(self) -> None:

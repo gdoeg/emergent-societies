@@ -33,6 +33,62 @@ class Environment:
         self.resource_pool = resource_pool
         self.config = config if config is not None else SimulationConfig()
         self.interaction_graph: defaultdict[Any, set] = defaultdict(set)
+        self._inject_agent_context()
+
+    def _inject_agent_context(self) -> None:
+        """Attach environment conditions and population snapshot to each agent."""
+        base_context = {
+            "scarcity_level": self.config.scarcity_level,
+            "redistribution_strength": self.config.redistribution_strength,
+            "enable_elite_advantage": self.config.enable_elite_advantage,
+        }
+        snapshot = [agent.resources for agent in self.agents]
+        for agent in self.agents:
+            if hasattr(agent, "simulation_context"):
+                agent.simulation_context = dict(base_context)
+            if hasattr(agent, "population_resources_snapshot"):
+                agent.population_resources_snapshot = list(snapshot)
+
+    def _interaction_outcome(self, my_action: str, other_action: str) -> str:
+        """Map action pairs to a per-agent interaction outcome label."""
+        if my_action == "cooperate" and other_action == "cooperate":
+            return "mutual_cooperation"
+        if my_action == "defect" and other_action == "defect":
+            return "mutual_defection"
+        if my_action == "defect" and other_action == "cooperate":
+            return "exploited_other"
+        if my_action == "cooperate" and other_action == "defect":
+            return "was_exploited"
+        return "unknown"
+
+    def _latest_decision_record(self, agent, other_agent_id):
+        """Return the latest decision record for a specific opponent."""
+        for record in reversed(agent.memory_log):
+            if (
+                record.get("action") == "decide_action"
+                and record.get("other_agent_id") == other_agent_id
+            ):
+                return record
+        return None
+
+    def _log_decision_outcome(self, agent, other_agent, my_action: str, other_action: str) -> None:
+        """Log parsed decision and realized outcome for analysis."""
+        decision_record = self._latest_decision_record(agent, other_agent.agent_id)
+        outcome = self._interaction_outcome(my_action, other_action)
+        agent.memory_log.append(
+            {
+                "action": "decision_outcome",
+                "policy": decision_record.get("policy") if decision_record else None,
+                "agent_id": agent.agent_id,
+                "other_agent_id": other_agent.agent_id,
+                "prompt_summary": decision_record.get("prompt_summary") if decision_record else None,
+                "raw_response": decision_record.get("raw_response") if decision_record else None,
+                "parsed_action": my_action,
+                "other_action": other_action,
+                "resulting_outcome": outcome,
+                "cycle": self.cycle_count,
+            }
+        )
     
     def step(self):
         """
@@ -99,6 +155,10 @@ class Environment:
                 agent1.record_interaction(agent2.agent_id)
             if hasattr(agent2, 'record_interaction') and hasattr(agent1, 'agent_id'):
                 agent2.record_interaction(agent1.agent_id)
+
+            if action1 is not None and action2 is not None:
+                self._log_decision_outcome(agent1, agent2, action1, action2)
+                self._log_decision_outcome(agent2, agent1, action2, action1)
 
             # Update interaction graph (undirected edge between agent1 and agent2)
             if hasattr(agent1, 'agent_id') and hasattr(agent2, 'agent_id'):
@@ -209,6 +269,7 @@ class Environment:
                 )
 
         self.cycle_count += 1
+        self._inject_agent_context()
         
         # Log resource distribution after step (guarded so list build is skipped when DEBUG is off)
         if logger.isEnabledFor(logging.DEBUG):

@@ -27,8 +27,7 @@ def _make_policy(config: SimulationConfig):
         config: Active :class:`~simulation.config.SimulationConfig`.
 
     Returns:
-        An :class:`~simulation.policies.base.AgentPolicy` instance shared by
-        all agents (policies are stateless with respect to individual agents).
+        An :class:`~simulation.policies.base.AgentPolicy` instance.
     """
     if config.policy_type == "llm":
         logger.info(
@@ -43,16 +42,38 @@ def _make_policy(config: SimulationConfig):
 
 def _make_agents(config: SimulationConfig):
     """Create agents with initial resources per the configured distribution."""
-    policy = _make_policy(config)
+    if config.policy_type == "llm":
+        logger.info(
+            "Creating independent LLMPolicy instances for each agent: model=%s api_base_url=%s",
+            config.llm_model,
+            config.llm_api_base_url,
+        )
+
+        def agent_policy():
+            return LLMPolicy(
+                model=config.llm_model,
+                api_base_url=config.llm_api_base_url,
+                timeout=config.llm_timeout,
+            )
+
+    else:
+        shared_policy = _make_policy(config)
+
+        def agent_policy():
+            return shared_policy
 
     if config.resource_distribution == "random":
         agents = [
-            Agent(i, resources=random.randint(1, config.initial_resources * 2), policy=policy)
+            Agent(
+                i,
+                resources=random.randint(1, config.initial_resources * 2),
+                policy=agent_policy(),
+            )
             for i in range(config.num_agents)
         ]
     else:
         agents = [
-            Agent(i, resources=config.initial_resources, policy=policy)
+            Agent(i, resources=config.initial_resources, policy=agent_policy())
             for i in range(config.num_agents)
         ]
 
