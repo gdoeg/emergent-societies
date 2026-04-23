@@ -37,11 +37,12 @@ export default function Controls({ onUpdate }: ControlsProps) {
     <motion.div
       initial={{ opacity: 0, y: 30 }}
       animate={{ opacity: 1, y: 0 }}
+      whileHover={{ scale: 1.02 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="bg-white rounded-2xl shadow-lg border border-green-100 p-6 flex flex-wrap items-end gap-5 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200"
+      className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 p-6 flex flex-wrap items-end gap-5 shadow-[0_0_40px_rgba(34,211,238,0.05)] transition duration-300"
     >
       <div className="flex flex-col gap-2 min-w-[130px]">
-        <label className="text-sm font-medium text-green-700" htmlFor="steps-input">
+        <label className="text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="steps-input">
           Steps
         </label>
         <input
@@ -51,7 +52,7 @@ export default function Controls({ onUpdate }: ControlsProps) {
           max={1000}
           value={steps}
           onChange={(e) => setSteps(Number(e.target.value))}
-          className="w-32 rounded-xl border border-green-200 bg-white px-3 py-2 text-sm text-green-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+          className="w-32 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/50"
         />
       </div>
 
@@ -59,7 +60,7 @@ export default function Controls({ onUpdate }: ControlsProps) {
         <button
           onClick={handleRun}
           disabled={running}
-          className="rounded-xl bg-green-500 hover:bg-green-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md disabled:opacity-50 transition-all duration-200"
+          className="rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 px-5 py-2.5 text-sm font-semibold text-cyan-400 shadow-md disabled:opacity-50 transition duration-300"
         >
           {running ? "Running..." : "Run Simulation"}
         </button>
@@ -67,7 +68,7 @@ export default function Controls({ onUpdate }: ControlsProps) {
         <button
           onClick={handleReset}
           disabled={resetting}
-          className="rounded-xl border border-green-300 bg-white px-5 py-2.5 text-sm font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50 transition-all duration-200"
+          className="rounded-xl border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white/70 hover:bg-white/10 disabled:opacity-50 transition duration-300"
         >
           {resetting ? "Resetting..." : "Reset"}
         </button>

@@ -41,7 +41,7 @@ export default function DistributionChart({ latest }: DistributionChartProps) {
 
   if (chartData.length === 0) {
     return (
-      <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-green-200 bg-green-50/50 text-sm text-green-600">
+      <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 text-sm text-white/50">
         No data yet - run simulation to generate insights.
       </div>
     );
@@ -50,13 +50,13 @@ export default function DistributionChart({ latest }: DistributionChartProps) {
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#bbf7d0" />
-        <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#166534" }} stroke="#86efac" tickMargin={8} />
-        <YAxis tick={{ fontSize: 11, fill: "#166534" }} stroke="#86efac" tickMargin={8} />
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.07)" />
+        <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "rgba(255,255,255,0.4)" }} stroke="rgba(255,255,255,0.1)" tickMargin={8} />
+        <YAxis tick={{ fontSize: 11, fill: "rgba(255,255,255,0.4)" }} stroke="rgba(255,255,255,0.1)" tickMargin={8} />
         <Tooltip
-          contentStyle={{ borderRadius: 8, borderColor: "#bbf7d0", fontSize: 12 }}
+          contentStyle={{ borderRadius: 8, borderColor: "rgba(34,211,238,0.2)", fontSize: 12, backgroundColor: "#0f172a", color: "#fff" }}
         />
-        <Bar dataKey="count" fill="#16a34a" name="Agents" radius={[3, 3, 0, 0]} />
+        <Bar dataKey="count" fill="#22d3ee" name="Agents" radius={[3, 3, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

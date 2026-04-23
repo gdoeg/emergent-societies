@@ -45,45 +45,57 @@ export default function Home() {
 
   const latest = metrics.length > 0 ? metrics[metrics.length - 1] : null;
   const metricsConfig = [
-    { label: "Current Tick", value: latest ? latest.tick : "—", tint: "rgba(22,163,74,0.1)" },
-    {
-      label: "Gini (Inequality)",
-      value: latest ? latest.gini.toFixed(4) : "—",
-      tint: "rgba(21,128,61,0.12)",
-    },
-    {
-      label: "Total Wealth",
-      value: latest ? latest.total_wealth.toFixed(0) : "—",
-      tint: "rgba(34,197,94,0.11)",
-    },
-    {
-      label: "Network Density",
-      value: latest ? latest.network_density.toFixed(4) : "—",
-      tint: "rgba(5,150,105,0.12)",
-    },
+    { label: "Current Tick", value: latest ? latest.tick : "—" },
+    { label: "Gini (Inequality)", value: latest ? latest.gini.toFixed(4) : "—" },
+    { label: "Total Wealth", value: latest ? latest.total_wealth.toFixed(0) : "—" },
+    { label: "Network Density", value: latest ? latest.network_density.toFixed(4) : "—" },
   ];
 
   return (
     <DashboardLayout>
-      <div className="space-y-10">
-        {/* Stat strip */}
-        <div>
-          <p className="mb-4 text-sm font-semibold uppercase tracking-wide text-green-700">Key Metrics</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {metricsConfig.map(({ label, value, tint }, i) => (
+      <div className="space-y-6">
+        {/* Header row */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-white">Emergent Societies</h1>
+            <p className="text-sm text-white/50 mt-0.5">Real-time simulation</p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-400" />
+            </span>
+            <span className="text-xs font-semibold text-cyan-400">Live Simulation</span>
+          </div>
+        </div>
+
+        {/* Status / error */}
+        {loading && (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70">
+            Loading metrics...
+          </div>
+        )}
+        {error && (
+          <div className="rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm px-4 py-3">
+            {error}
+          </div>
+        )}
+
+        {/* Metrics row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {metricsConfig.map(({ label, value }, i) => (
             <motion.div
               key={label}
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
+              whileHover={{ scale: 1.02 }}
               transition={{ duration: 0.4, delay: i * 0.08 }}
-              className="bg-white rounded-2xl border border-green-100 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 p-6"
-              style={{ backgroundImage: `linear-gradient(180deg, ${tint} 0%, rgba(255,255,255,1) 44%)` }}
+              className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 p-6 shadow-[0_0_40px_rgba(34,211,238,0.05)] transition duration-300"
             >
-              <div className="mb-4 h-1.5 w-16 rounded-full bg-green-500/40" />
-              <p className="text-sm text-green-600 uppercase tracking-wide">{label}</p>
-              <p className="mt-3 text-3xl font-semibold text-green-900 leading-none">
+              <p className="text-xs uppercase tracking-wide text-white/50">{label}</p>
+              <p className="mt-3 text-2xl font-bold text-white leading-none">
                 {loading && !latest ? (
-                  <span className="inline-block h-8 w-20 rounded-md bg-green-100 animate-pulse" />
+                  <span className="inline-block h-7 w-20 rounded-md bg-white/10 animate-pulse" />
                 ) : (
                   value
                 )}
@@ -91,51 +103,42 @@ export default function Home() {
             </motion.div>
           ))}
         </div>
+
+        {/* Main content grid: primary chart + controls */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <ChartCard title="Wealth Inequality (Gini)" delay={0.1}>
+              <GiniChart data={metrics} />
+            </ChartCard>
+          </div>
+          <div className="lg:col-span-1">
+            <div className="space-y-6">
+              <p className="text-xs uppercase tracking-wide text-white/50">Simulation Controls</p>
+              <Controls onUpdate={refresh} />
+            </div>
+          </div>
         </div>
 
-        {/* Controls */}
-        <div>
-          <p className="mb-4 text-sm font-semibold uppercase tracking-wide text-green-700">Simulation Controls</p>
-          <Controls onUpdate={refresh} />
-        </div>
+        {/* Wide chart */}
+        <ChartCard title="Total Wealth" delay={0.15}>
+          <WealthChart data={metrics} />
+        </ChartCard>
 
-        {/* Status / error */}
-        {loading && (
-          <div className="rounded-xl border border-green-200 bg-white/80 px-4 py-3 text-sm text-green-700 shadow-sm">
-            Loading metrics...
-          </div>
-        )}
-        {error && (
-          <div className="rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm px-4 py-3">
-            {error}
-          </div>
-        )}
-
-        {/* Charts grid */}
-        <div>
-          <p className="mb-4 text-sm font-semibold uppercase tracking-wide text-green-700">Analytics</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <ChartCard title="Wealth Inequality (Gini)" delay={0.1}>
-            <GiniChart data={metrics} />
-          </ChartCard>
-
-          <ChartCard title="Total Wealth" delay={0.15}>
-            <WealthChart data={metrics} />
-          </ChartCard>
-
-          <ChartCard title="Power Metrics" delay={0.2}>
-            <PowerChart data={metrics} />
-          </ChartCard>
-
-          <ChartCard title="Network Metrics" delay={0.25}>
+        {/* Bottom row: two charts side-by-side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <ChartCard title="Network Metrics" delay={0.2}>
             <NetworkChart data={metrics} />
           </ChartCard>
 
-          <ChartCard title="Wealth Distribution (latest tick)" delay={0.3}>
-            <DistributionChart latest={latest} />
+          <ChartCard title="Power Metrics" delay={0.25}>
+            <PowerChart data={metrics} />
           </ChartCard>
         </div>
-        </div>
+
+        {/* Wealth distribution */}
+        <ChartCard title="Wealth Distribution (latest tick)" delay={0.3}>
+          <DistributionChart latest={latest} />
+        </ChartCard>
       </div>
     </DashboardLayout>
   );
