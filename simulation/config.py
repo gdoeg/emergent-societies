@@ -33,6 +33,17 @@ class SimulationConfig:
         enable_elite_advantage: When ``True``, the richer agent in a pairwise
             interaction receives amplified cooperation rewards and loses fewer
             resources during redistribution.
+        policy_type: Which decision policy to assign to agents.
+            ``"deterministic"`` uses the built-in stochastic-tendency logic.
+            ``"llm"`` delegates decisions to an LLM via the OpenAI-compatible
+            chat-completion API.
+        llm_model: LLM model name used when ``policy_type`` is ``"llm"``
+            (default: ``"llama3"``).
+        llm_api_base_url: Base URL for the chat-completion API.  Change this
+            to use any OpenAI-compatible provider
+            (default: ``"http://localhost:11434/v1"``).
+        llm_timeout: HTTP request timeout in seconds for LLM API calls
+            (default: ``15``).
     """
 
     num_agents: int = 100
@@ -46,6 +57,10 @@ class SimulationConfig:
     redistribution_strength: float = 0.5
     elite_advantage_factor: float = 1.2
     enable_elite_advantage: bool = False
+    policy_type: str = "llm"
+    llm_model: str = "llama3"
+    llm_api_base_url: str = "http://localhost:11434/v1"
+    llm_timeout: int = 15
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -89,6 +104,16 @@ class SimulationConfig:
         if self.top_n_leaders < 1:
             raise ValueError("top_n_leaders must be at least 1")
 
+        valid_policy_types = {"deterministic", "llm"}
+        if self.policy_type not in valid_policy_types:
+            raise ValueError(
+                "policy_type must be one of "
+                f"{sorted(valid_policy_types)}, got {self.policy_type!r}"
+            )
+
+        if self.llm_timeout < 1:
+            raise ValueError("llm_timeout must be at least 1 second")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -103,6 +128,10 @@ class SimulationConfig:
             "redistribution_strength": self.redistribution_strength,
             "elite_advantage_factor": self.elite_advantage_factor,
             "enable_elite_advantage": self.enable_elite_advantage,
+            "policy_type": self.policy_type,
+            "llm_model": self.llm_model,
+            "llm_api_base_url": self.llm_api_base_url,
+            "llm_timeout": self.llm_timeout,
         }
 
     @classmethod
@@ -136,5 +165,9 @@ class SimulationConfig:
             f"top_n_leaders={self.top_n_leaders}, "
             f"redistribution_strength={self.redistribution_strength}, "
             f"elite_advantage_factor={self.elite_advantage_factor}, "
-            f"enable_elite_advantage={self.enable_elite_advantage})"
+            f"enable_elite_advantage={self.enable_elite_advantage}, "
+            f"policy_type={self.policy_type!r}, "
+            f"llm_model={self.llm_model!r}, "
+            f"llm_api_base_url={self.llm_api_base_url!r}, "
+            f"llm_timeout={self.llm_timeout})"
         )
