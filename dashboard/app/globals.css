@@ -1,12 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 40%, #bbf7d0 100%);
-  --foreground: #14532d;
-  --card-bg: #ffffff;
-  --border-color: #bbf7d0;
-  --primary: #16a34a;
-  --accent: #4ade80;
+  --background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 24%),
+    radial-gradient(circle at 88% 14%, rgba(14, 165, 233, 0.12), transparent 22%),
+    linear-gradient(135deg, #f4efe8 0%, #edf4f1 52%, #dde9e8 100%);
+  --foreground: #102a33;
+  --card-bg: rgba(255, 255, 255, 0.88);
+  --border-color: rgba(148, 163, 184, 0.22);
+  --primary: #0f766e;
+  --accent: #14b8a6;
 }
 
 @theme inline {
@@ -27,6 +30,7 @@ body {
 html,
 body {
   min-height: 100%;
+  margin: 0;
 }
 
 body {
@@ -41,9 +45,19 @@ body::before {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 12% 18%, rgba(22, 163, 74, 0.18), transparent 30%),
-    radial-gradient(circle at 88% 10%, rgba(34, 197, 94, 0.16), transparent 28%),
-    radial-gradient(circle at 78% 80%, rgba(5, 150, 105, 0.12), transparent 30%);
+    linear-gradient(115deg, rgba(255, 255, 255, 0.3), transparent 38%),
+    radial-gradient(circle at 14% 18%, rgba(15, 118, 110, 0.12), transparent 30%),
+    radial-gradient(circle at 82% 74%, rgba(20, 184, 166, 0.12), transparent 32%);
+  z-index: 0;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 18px;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 28px;
   z-index: 0;
 }
 
@@ -51,4 +65,15 @@ h1,
 h2,
 h3 {
   font-family: var(--font-display), "Space Grotesk", "Avenir Next", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.dashboard-scale {
+  transform: scale(0.94);
+  transform-origin: top left;
+  width: 106%;
+  height: 106%;
 }

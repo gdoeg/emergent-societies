@@ -41,23 +41,23 @@ export default function DistributionChart({ latest }: DistributionChartProps) {
 
   if (chartData.length === 0) {
     return (
-      <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-green-200 bg-green-50/50 text-sm text-green-600">
+      <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/60 text-sm text-emerald-700">
         No data yet - run simulation to generate insights.
       </div>
     );
   }
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#bbf7d0" />
-        <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#166534" }} stroke="#86efac" tickMargin={8} />
-        <YAxis tick={{ fontSize: 11, fill: "#166534" }} stroke="#86efac" tickMargin={8} />
-        <Tooltip
-          contentStyle={{ borderRadius: 8, borderColor: "#bbf7d0", fontSize: 12 }}
-        />
-        <Bar dataKey="count" fill="#16a34a" name="Agents" radius={[3, 3, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="h-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#d7e9e3" vertical={false} />
+          <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#4b5f67" }} stroke="#c6ddd6" tickMargin={8} />
+          <YAxis tick={{ fontSize: 11, fill: "#4b5f67" }} stroke="#c6ddd6" tickMargin={8} />
+          <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#d7e9e3", fontSize: 12 }} />
+          <Bar dataKey="count" fill="#0f766e" name="Agents" radius={[6, 6, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
