@@ -87,8 +87,8 @@ export default function Home() {
 
   return (
     <DashboardLayout>
-      <div className="grid h-full w-full grid-cols-1 gap-4 p-4 xl:grid-cols-[260px_1fr]">
-        <aside className="grid min-h-0 gap-4 xl:grid-rows-[auto_auto_auto_minmax(0,1fr)]">
+      <div className="grid w-full grid-cols-1 gap-4 p-4 xl:h-full xl:grid-cols-[260px_1fr]">
+        <aside className="grid gap-4 xl:min-h-0 xl:grid-rows-[auto_auto_auto_minmax(0,1fr)]">
           <motion.section
             initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
@@ -162,7 +162,7 @@ export default function Home() {
           </motion.section>
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-col">
+        <section className="flex min-w-0 flex-col xl:min-h-0">
           <div className="grid h-22.5 grid-cols-4 gap-4">
             {metricsConfig.map(({ label, value, tint }, i) => (
               <motion.div
