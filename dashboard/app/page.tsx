@@ -162,7 +162,7 @@ export default function Home() {
           </motion.section>
         </aside>
 
-        <section className="flex min-h-0 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-col">
           <div className="grid h-22.5 grid-cols-4 gap-4">
             {metricsConfig.map(({ label, value, tint }, i) => (
               <motion.div
@@ -185,7 +185,7 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="mt-4 grid flex-1 min-h-0 grid-cols-3 auto-rows-fr gap-4">
+          <div className="mt-4 grid flex-1 min-h-0 min-w-0 grid-cols-3 auto-rows-fr gap-4">
             <ChartCard title="Wealth Distribution (latest tick)" delay={0.3} className="col-span-1 row-span-2" bodyClassName="h-full">
               <DistributionChart latest={latest} />
             </ChartCard>
