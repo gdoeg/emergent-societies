@@ -18,30 +18,23 @@ interface GiniChartProps {
 export default function GiniChart({ data }: GiniChartProps) {
   if (data.length === 0) {
     return (
-      <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-green-200 bg-green-50/50 text-sm text-green-600">
+      <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/60 text-sm text-emerald-700">
         No data yet - run simulation to generate insights.
       </div>
     );
   }
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#bbf7d0" />
-        <XAxis dataKey="tick" tick={{ fontSize: 11, fill: "#166534" }} stroke="#86efac" tickMargin={8} />
-        <YAxis domain={[0, 1]} tick={{ fontSize: 11, fill: "#166534" }} stroke="#86efac" tickMargin={8} />
-        <Tooltip
-          contentStyle={{ borderRadius: 8, borderColor: "#bbf7d0", fontSize: 12 }}
-        />
-        <Line
-          type="monotone"
-          dataKey="gini"
-          stroke="#16a34a"
-          strokeWidth={3}
-          dot={false}
-          name="Gini"
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="h-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#d7e9e3" vertical={false} />
+          <XAxis dataKey="tick" tick={{ fontSize: 11, fill: "#4b5f67" }} stroke="#c6ddd6" tickMargin={8} />
+          <YAxis domain={[0, 1]} tick={{ fontSize: 11, fill: "#4b5f67" }} stroke="#c6ddd6" tickMargin={8} />
+          <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#d7e9e3", fontSize: 12 }} />
+          <Line type="monotone" dataKey="gini" stroke="#0f766e" strokeWidth={3} dot={false} name="Gini" />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
