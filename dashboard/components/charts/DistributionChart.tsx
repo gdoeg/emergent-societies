@@ -48,7 +48,7 @@ export default function DistributionChart({ latest }: DistributionChartProps) {
   }
 
   return (
-    <div className="h-full">
+    <div className="h-full min-h-24 lg:min-h-26">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#d7e9e3" vertical={false} />

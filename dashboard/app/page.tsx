@@ -87,47 +87,47 @@ export default function Home() {
 
   return (
     <DashboardLayout>
-      <div className="grid h-full w-full grid-cols-1 gap-4 p-4 xl:grid-cols-[260px_1fr]">
-        <aside className="grid min-h-0 gap-4 xl:grid-rows-[auto_auto_auto_minmax(0,1fr)]">
+      <div className="grid w-full grid-cols-1 gap-2 p-2 lg:h-full lg:grid-cols-[214px_1fr] lg:p-2.5">
+        <aside className="grid min-w-0 gap-1.5 lg:min-h-0 lg:grid-rows-[auto_auto_auto_minmax(0,1fr)]">
           <motion.section
             initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.45, ease: "easeOut" }}
-            className="overflow-hidden rounded-4xl border border-slate-900/10 bg-[linear-gradient(145deg,rgba(16,42,51,0.96),rgba(23,63,71,0.92))] p-4 text-white shadow-[0_28px_90px_rgba(16,42,51,0.24)]"
+            className="overflow-hidden rounded-4xl border border-slate-900/10 bg-[linear-gradient(145deg,rgba(16,42,51,0.96),rgba(23,63,71,0.92))] p-2 text-white shadow-[0_28px_90px_rgba(16,42,51,0.24)]"
           >
-            <div className="flex items-center justify-between gap-3">
-              <span className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-100/90">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-100/90">
                 Live Dashboard
               </span>
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_8px_rgba(52,211,153,0.12)]" />
             </div>
-            <h1 className="mt-5 max-w-sm text-3xl font-bold tracking-tight text-white">
+            <h1 className="mt-2 max-w-sm text-[1.6rem] font-bold tracking-tight text-white leading-[1.02]">
               Emergent Societies
             </h1>
-            <p className="mt-3 max-w-md text-sm leading-6 text-slate-200/86">
+            <p className="mt-1 max-w-md text-[11px] leading-4 text-slate-200/86">
               An operational view of emergent dynamics in an active simulation.
             </p>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3">
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              <div className="rounded-2xl border border-white/10 bg-white/6 px-2 py-1.5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300">Samples</p>
-                <p className="mt-1.5 text-xl font-semibold text-white">{metrics.length}</p>
+                <p className="mt-0.5 text-base font-semibold text-white">{metrics.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3">
+              <div className="rounded-2xl border border-white/10 bg-white/6 px-2 py-1.5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300">Mode</p>
-                <p className="mt-1.5 text-xl font-semibold text-white">Live</p>
+                <p className="mt-0.5 text-base font-semibold text-white">Live</p>
               </div>
             </div>
           </motion.section>
 
-          <Controls onUpdate={refresh} className="xl:h-full" />
+          <Controls onUpdate={refresh} className="lg:h-full" />
 
           <motion.section
             initial={{ opacity: 0, y: 28 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.08, ease: "easeOut" }}
-            className="rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm"
+            className="rounded-[28px] border border-white/70 bg-white/85 p-1.5 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm"
           >
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-1.5">
               <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] ${statusTone.className}`}>
                 {statusTone.label}
               </span>
@@ -137,8 +137,8 @@ export default function Home() {
                 </span>
               )}
             </div>
-            <p className="mt-4 text-sm leading-6 text-slate-600">
-              {error ?? "The dashboard is polling every second and the cards resize to use the full canvas on large displays."}
+            <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
+              {error ?? "Polling every second with adaptive card sizing for large displays."}
             </p>
           </motion.section>
 
@@ -146,35 +146,35 @@ export default function Home() {
             initial={{ opacity: 0, y: 28 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.12, ease: "easeOut" }}
-            className="rounded-[28px] border border-white/70 bg-white/88 p-4 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm xl:min-h-0"
+            className="rounded-[28px] border border-white/70 bg-white/88 p-1.5 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm lg:min-h-0"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
               Quick View
             </p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
               {railStats.map(({ label, value }) => (
-                <div key={label} className="rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3">
+                <div key={label} className="rounded-2xl border border-slate-200/70 bg-slate-50/70 px-2 py-1.5">
                   <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">{label}</p>
-                  <p className="mt-1.5 text-lg font-semibold text-slate-900">{value}</p>
+                  <p className="mt-0.5 text-sm font-semibold text-slate-900">{value}</p>
                 </div>
               ))}
             </div>
           </motion.section>
         </aside>
 
-        <section className="flex min-h-0 flex-col">
-          <div className="grid h-22.5 grid-cols-4 gap-4">
+        <section className="flex min-w-0 flex-col lg:min-h-0">
+          <div className="grid h-auto grid-cols-2 gap-1.5 lg:h-15 lg:grid-cols-4 lg:gap-2">
             {metricsConfig.map(({ label, value, tint }, i) => (
               <motion.div
                 key={label}
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, delay: i * 0.08 }}
-                className="rounded-[28px] border border-white/70 p-4 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_30px_90px_rgba(16,42,51,0.16)]"
+                className="rounded-[28px] border border-white/70 p-1.5 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_30px_90px_rgba(16,42,51,0.16)] lg:p-2"
                 style={{ backgroundImage: `linear-gradient(180deg, ${tint} 0%, rgba(255,255,255,0.96) 46%)` }}
               >
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">{label}</p>
-                <p className="mt-2 text-2xl font-semibold leading-none text-slate-950">
+                <p className="mt-0.5 text-base font-semibold leading-none text-slate-950 lg:text-lg">
                   {loading && !latest ? (
                     <span className="inline-block h-6 w-16 animate-pulse rounded-md bg-slate-200" />
                   ) : (
@@ -185,8 +185,8 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="mt-4 grid flex-1 min-h-0 grid-cols-3 auto-rows-fr gap-4">
-            <ChartCard title="Wealth Distribution (latest tick)" delay={0.3} className="col-span-1 row-span-2" bodyClassName="h-full">
+          <div className="mt-1.5 grid flex-1 min-h-0 min-w-0 grid-cols-1 auto-rows-fr gap-1.5 lg:grid-cols-2">
+            <ChartCard title="Wealth Distribution (latest tick)" delay={0.3} className="col-span-1" bodyClassName="h-full">
               <DistributionChart latest={latest} />
             </ChartCard>
 

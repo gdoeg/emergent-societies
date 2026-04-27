@@ -1,12 +1,17 @@
 # Emergent Societies
 
-![Emergent Societies Dashboard](assets/emergent-societies.png)
+![Emergent Societies Dashboard](assets/emergent-societies-preview.png)
 
 Emergent Societies is an AI-driven multi-agent simulation platform that explores how cooperation, inequality, and power dynamics emerge in complex systems.
 
 The system models autonomous agents that interact, trade, compete, and form relationships under different economic and environmental conditions.
 
 This project combines simulation design, backend systems, and real-time visualization to study emergent behavior at scale.
+
+## Live Demo
+
+Frontend: https://emergent-societies.vercel.app  
+Backend API: https://emergent-societies.onrender.com
 
 ## Backend Cold Start Notice
 
@@ -22,11 +27,6 @@ If the dashboard does not load immediately, please allow time for the service to
 - A Python simulation engine (agents, environment, metrics, policies)
 - A FastAPI backend that exposes live metrics and simulation controls
 - A Next.js dashboard for real-time visualization
-
-## Live Demo
-
-Frontend: https://your-vercel-url.vercel.app  
-Backend API: https://your-render-url.onrender.com
 
 ## Current Capabilities
 
@@ -204,5 +204,5 @@ emergent-societies/
 ## Related Docs
 
 - AGENT_DOCUMENTATION.md: Agent API details
-- docs/experiments.md: Experiment notes (currently empty)
+- docs/experiments.md: Experiment notes
 
