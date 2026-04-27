@@ -8,6 +8,11 @@ The system models autonomous agents that interact, trade, compete, and form rela
 
 This project combines simulation design, backend systems, and real-time visualization to study emergent behavior at scale.
 
+## Live Demo
+
+Frontend: https://emergent-societies.vercel.app  
+Backend API: https://emergent-societies.onrender.com
+
 ## Backend Cold Start Notice
 
 The backend is deployed on Render's free tier, which may enter a sleep state after inactivity.
@@ -22,11 +27,6 @@ If the dashboard does not load immediately, please allow time for the service to
 - A Python simulation engine (agents, environment, metrics, policies)
 - A FastAPI backend that exposes live metrics and simulation controls
 - A Next.js dashboard for real-time visualization
-
-## Live Demo
-
-Frontend: https://emergent-societies.vercel.app  
-Backend API: https://emergent-societies.onrender.com
 
 ## Current Capabilities
 
