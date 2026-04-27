@@ -28,17 +28,17 @@ export default function ChartCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay, ease: "easeOut" }}
       className={joinClasses(
-        "group h-full min-w-0 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(241,248,247,0.96))] p-4 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_30px_90px_rgba(16,42,51,0.16)]",
+        "group h-full min-w-0 rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(241,248,247,0.96))] p-1.5 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_30px_90px_rgba(16,42,51,0.16)] lg:p-2",
         className,
       )}
     >
       <div className="flex h-full flex-col">
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="mb-1.5 flex items-center justify-between gap-2 lg:mb-2">
           <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
             Analytics
           </p>
-            <h2 className="mt-1.5 text-base font-semibold text-slate-900">
+            <h2 className="mt-0.5 text-[13px] font-semibold text-slate-900 lg:text-[14px]">
             {title}
             </h2>
           </div>
