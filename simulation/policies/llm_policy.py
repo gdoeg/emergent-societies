@@ -168,7 +168,7 @@ class LLMPolicy(AgentPolicy):
     # Cache helpers
     # ------------------------------------------------------------------
 
-    def _make_cache_key(self, agent, context) -> tuple:
+    def _make_cache_key(self, agent, context) -> Tuple[Any, Any, int, int, str, float]:
         """Build a minimal state key for the decision cache.
 
         Uses rounded resource values and the last known outcome/trust so that
@@ -180,8 +180,12 @@ class LLMPolicy(AgentPolicy):
         world object or None, default values are used so the cache still works
         safely in backwards-compatible call paths.
         """
-        opponent_id = getattr(context, "agent_id", None) if context is not None else None
-        opp_resources = getattr(context, "resources", 0) if context is not None else 0
+        if context is not None:
+            opponent_id = getattr(context, "agent_id", None)
+            opp_resources = getattr(context, "resources", 0)
+        else:
+            opponent_id = None
+            opp_resources = 0
         memory_entry = agent.memory.get(opponent_id, {}) if opponent_id is not None else {}
         last_outcome = memory_entry.get("last_outcome", "none")
         trust = round(memory_entry.get("trust", 0.0), 1)
