@@ -47,6 +47,7 @@ def _make_agents(config: SimulationConfig):
                 model=config.llm_model,
                 api_base_url=config.llm_api_base_url,
                 timeout=config.llm_timeout,
+                decision_interval=config.decision_interval,
             )
 
     else:
@@ -77,6 +78,7 @@ def _make_policy(config: SimulationConfig):
             model=config.llm_model,
             api_base_url=config.llm_api_base_url,
             timeout=config.llm_timeout,
+            decision_interval=config.decision_interval,
         )
 
     logger.info("Using DeterministicPolicy in backend")

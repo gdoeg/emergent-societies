@@ -43,11 +43,20 @@ class SimulationConfig:
             to use any OpenAI-compatible provider
             (default: ``"http://localhost:11434/v1"``).
         llm_timeout: HTTP request timeout in seconds for LLM API calls
-            (default: ``15``).
+            (default: ``4``).
+        decision_interval: LLM agents only call the model every
+            ``decision_interval`` steps; the last decision is reused between
+            calls to reduce API load (default: ``4``).
+        max_pairs_per_step: Maximum number of agent pairs to interact per
+            simulation step.  Random sampling is used when the pool of
+            shuffled pairs exceeds this limit (default: ``15``).
+        chunk_size: Number of simulation steps executed per ``run_steps``
+            chunk.  Callers can use ``run_steps`` to avoid blocking for a
+            full ``num_steps`` run (default: ``10``).
     """
 
     num_agents: int = 100
-    num_steps: int = 500
+    num_steps: int = 100
     initial_resources: int = 10
     resource_distribution: str = "uniform"
     scarcity_level: float = 0.2
@@ -60,7 +69,14 @@ class SimulationConfig:
     policy_type: str = "llm"
     llm_model: str = "llama3"
     llm_api_base_url: str = "http://localhost:11434/v1"
-    llm_timeout: int = 15
+    # Reduced from 15 s → 4 s so failures are fast and non-blocking
+    llm_timeout: int = 4
+    # LLM throttling: reuse last decision for this many steps before re-querying
+    decision_interval: int = 4
+    # Cap pairwise interactions per step to bound O(n²) LLM call growth
+    max_pairs_per_step: int = 15
+    # Chunk size for run_steps(); avoids blocking on a full num_steps run
+    chunk_size: int = 10
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -114,6 +130,15 @@ class SimulationConfig:
         if self.llm_timeout < 1:
             raise ValueError("llm_timeout must be at least 1 second")
 
+        if self.decision_interval < 1:
+            raise ValueError("decision_interval must be at least 1")
+
+        if self.max_pairs_per_step < 1:
+            raise ValueError("max_pairs_per_step must be at least 1")
+
+        if self.chunk_size < 1:
+            raise ValueError("chunk_size must be at least 1")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -132,6 +157,9 @@ class SimulationConfig:
             "llm_model": self.llm_model,
             "llm_api_base_url": self.llm_api_base_url,
             "llm_timeout": self.llm_timeout,
+            "decision_interval": self.decision_interval,
+            "max_pairs_per_step": self.max_pairs_per_step,
+            "chunk_size": self.chunk_size,
         }
 
     @classmethod
@@ -169,5 +197,8 @@ class SimulationConfig:
             f"policy_type={self.policy_type!r}, "
             f"llm_model={self.llm_model!r}, "
             f"llm_api_base_url={self.llm_api_base_url!r}, "
-            f"llm_timeout={self.llm_timeout})"
+            f"llm_timeout={self.llm_timeout}, "
+            f"decision_interval={self.decision_interval}, "
+            f"max_pairs_per_step={self.max_pairs_per_step}, "
+            f"chunk_size={self.chunk_size})"
         )

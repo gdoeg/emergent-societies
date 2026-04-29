@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from statistics import mean
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib import request as urllib_request
 from urllib.error import URLError
 
@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODEL = "gpt-4o-mini"
 _DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
 _FALLBACK_ACTION = "cooperate"
+# Maximum number of cached decisions kept in memory per policy instance.
+_MAX_CACHE_SIZE = 1024
 
 
 class LLMPolicy(AgentPolicy):
@@ -45,13 +47,21 @@ class LLMPolicy(AgentPolicy):
         self,
         model: str = _DEFAULT_MODEL,
         api_base_url: str = _DEFAULT_API_BASE_URL,
-        timeout: int = 15,
+        timeout: int = 4,
         policy_logger=None,
+        decision_interval: int = 4,
     ) -> None:
         self.model = model
         self.api_base_url = api_base_url.rstrip("/")
         self.timeout = timeout
         self._policy_logger = policy_logger
+        # Throttling: only call LLM every decision_interval invocations per agent;
+        # reuse the last decision in between to reduce API load.
+        self.decision_interval = decision_interval
+        self._call_counters: Dict[Any, int] = {}          # agent_id -> total call count
+        self._throttle_cache: Dict[Any, str] = {}         # agent_id -> last action
+        # Lightweight in-memory decision cache keyed by a minimal state tuple.
+        self._decision_cache: Dict[tuple, str] = {}
 
     # ------------------------------------------------------------------
     # Public interface
@@ -63,6 +73,12 @@ class LLMPolicy(AgentPolicy):
         Falls back to ``"cooperate"`` if the API call fails so the simulation
         can continue gracefully without a live LLM.
 
+        When ``decision_interval > 1``, the LLM is only queried on every
+        *k*-th call per agent; the last result is reused between calls to
+        limit API load without removing LLM involvement.  A lightweight
+        state-based cache further reduces redundant calls when two agents
+        face identical conditions across steps.
+
         Args:
             agent: The :class:`~simulation.agent.Agent` making the decision.
             context: The opponent agent (or world object).  Agents with an
@@ -71,6 +87,25 @@ class LLMPolicy(AgentPolicy):
         Returns:
             ``"cooperate"`` or ``"defect"``.
         """
+        agent_id = agent.agent_id
+
+        # --- Throttle: reuse last decision within the interval window ---
+        call_count = self._call_counters.get(agent_id, 0)
+        self._call_counters[agent_id] = call_count + 1
+
+        if call_count > 0 and call_count % self.decision_interval != 0:
+            cached = self._throttle_cache.get(agent_id)
+            if cached is not None:
+                return cached
+
+        # --- Decision cache: skip LLM when state is identical to a prior call ---
+        cache_key = self._make_cache_key(agent, context)
+        if cache_key in self._decision_cache:
+            action = self._decision_cache[cache_key]
+            self._throttle_cache[agent_id] = action
+            return action
+
+        # --- Full LLM call path ---
         prompt = self._build_prompt(agent, context)
         raw_response: Optional[str] = None
         action = _FALLBACK_ACTION
@@ -118,7 +153,37 @@ class LLMPolicy(AgentPolicy):
 
         agent.memory_log.append(log_record)
 
+        # Store results in both caches for future reuse.
+        if len(self._decision_cache) < _MAX_CACHE_SIZE:
+            self._decision_cache[cache_key] = action
+        self._throttle_cache[agent_id] = action
+
         return action
+
+    # ------------------------------------------------------------------
+    # Cache helpers
+    # ------------------------------------------------------------------
+
+    def _make_cache_key(self, agent, context) -> tuple:
+        """Build a minimal state key for the decision cache.
+
+        Uses rounded resource values and the last known outcome/trust so that
+        minor floating-point fluctuations do not defeat the cache, while still
+        capturing meaningful state differences.
+        """
+        opponent_id = getattr(context, "agent_id", None) if context is not None else None
+        opp_resources = getattr(context, "resources", 0) if context is not None else 0
+        memory_entry = agent.memory.get(opponent_id, {}) if opponent_id is not None else {}
+        last_outcome = memory_entry.get("last_outcome", "none")
+        trust = round(memory_entry.get("trust", 0.0), 1)
+        return (
+            agent.agent_id,
+            opponent_id,
+            round(agent.resources),
+            round(opp_resources),
+            last_outcome,
+            trust,
+        )
 
     # ------------------------------------------------------------------
     # Prompt construction

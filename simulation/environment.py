@@ -302,19 +302,27 @@ class Environment:
     def pair_agents(self):
         """
         Randomly shuffle agents and return agent pairs for interaction.
-        
+
+        When ``config.max_pairs_per_step`` is set, only that many pairs are
+        returned (randomly sampled) to bound the number of LLM calls per step.
+
         Returns:
             list of tuples: agent pairs
         """
         # Create a copy to avoid modifying the original list
         shuffled = self.agents.copy()
         random.shuffle(shuffled)
-        
+
         # Pair agents - if odd number, last agent won't be paired
         pairs = []
         for i in range(0, len(shuffled) - 1, 2):
             pairs.append((shuffled[i], shuffled[i + 1]))
-        
+
+        # Cap interactions per step to prevent O(n²) LLM call growth.
+        max_pairs = getattr(self.config, "max_pairs_per_step", None)
+        if max_pairs is not None and len(pairs) > max_pairs:
+            pairs = random.sample(pairs, max_pairs)
+
         return pairs
     
     def get_resource_distribution(self):
