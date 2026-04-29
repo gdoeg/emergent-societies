@@ -303,8 +303,9 @@ class Environment:
         """
         Randomly shuffle agents and return agent pairs for interaction.
 
-        When ``config.max_pairs_per_step`` is set, only that many pairs are
-        returned (randomly sampled) to bound the number of LLM calls per step.
+        When ``config.max_pairs_per_step`` is set, pairing stops once that
+        limit is reached so no unnecessary pair tuples are constructed for
+        large agent populations.
 
         Returns:
             list of tuples: agent pairs
@@ -313,15 +314,17 @@ class Environment:
         shuffled = self.agents.copy()
         random.shuffle(shuffled)
 
-        # Pair agents - if odd number, last agent won't be paired
+        # Cap interactions per step to prevent O(n²) LLM call growth.
+        # Stop constructing pairs as soon as the limit is reached rather than
+        # building all pairs first and then sampling — avoids wasted allocation.
+        max_pairs = getattr(self.config, "max_pairs_per_step", None)
+        pair_limit = max_pairs if max_pairs is not None else len(shuffled) // 2
+
         pairs = []
         for i in range(0, len(shuffled) - 1, 2):
+            if len(pairs) >= pair_limit:
+                break
             pairs.append((shuffled[i], shuffled[i + 1]))
-
-        # Cap interactions per step to prevent O(n²) LLM call growth.
-        max_pairs = getattr(self.config, "max_pairs_per_step", None)
-        if max_pairs is not None and len(pairs) > max_pairs:
-            pairs = random.sample(pairs, max_pairs)
 
         return pairs
     

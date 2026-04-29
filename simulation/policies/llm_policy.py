@@ -90,10 +90,14 @@ class LLMPolicy(AgentPolicy):
         agent_id = agent.agent_id
 
         # --- Throttle: reuse last decision within the interval window ---
+        # call_count is read *before* incrementing so that the first call has
+        # call_count=0, which always passes through (0 % N == 0 for any N).
+        # Subsequent calls at positions 1, 2, 3 are throttled; position 4
+        # (call_count % decision_interval == 0) passes through again, etc.
         call_count = self._call_counters.get(agent_id, 0)
         self._call_counters[agent_id] = call_count + 1
 
-        if call_count > 0 and call_count % self.decision_interval != 0:
+        if call_count % self.decision_interval != 0:
             cached = self._throttle_cache.get(agent_id)
             if cached is not None:
                 return cached
@@ -170,6 +174,11 @@ class LLMPolicy(AgentPolicy):
         Uses rounded resource values and the last known outcome/trust so that
         minor floating-point fluctuations do not defeat the cache, while still
         capturing meaningful state differences.
+
+        The *context* object is expected to be an :class:`~simulation.agent.Agent`
+        instance (attributes: ``agent_id``, ``resources``).  When context is a
+        world object or None, default values are used so the cache still works
+        safely in backwards-compatible call paths.
         """
         opponent_id = getattr(context, "agent_id", None) if context is not None else None
         opp_resources = getattr(context, "resources", 0) if context is not None else 0

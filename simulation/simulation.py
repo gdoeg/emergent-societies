@@ -79,7 +79,8 @@ class Simulation:
         Chunking keeps individual blocking calls short and makes it easier for
         callers to interleave progress reporting between chunks.
         """
-        chunk_size = self.config.chunk_size if self.config is not None else self.steps
+        _DEFAULT_CHUNK_SIZE = 10
+        chunk_size = self.config.chunk_size if self.config is not None else _DEFAULT_CHUNK_SIZE
         remaining = self.steps
         while remaining > 0:
             to_run = min(chunk_size, remaining)
