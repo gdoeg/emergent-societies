@@ -35,7 +35,16 @@ def _make_policy(config: SimulationConfig):
             config.llm_model,
             config.llm_api_base_url,
         )
-        return LLMPolicy(model=config.llm_model, api_base_url=config.llm_api_base_url, timeout=config.llm_timeout)
+        return LLMPolicy(
+            model=config.llm_model,
+            api_base_url=config.llm_api_base_url,
+            timeout=config.llm_timeout,
+            decision_interval=config.decision_interval,
+            max_concurrent_llm_calls=config.max_concurrent_llm_calls,
+            batch_size=config.llm_batch_size,
+            enable_async=config.enable_async_llm,
+            debug_llm=config.debug_llm,
+        )
     logger.info("Using DeterministicPolicy")
     return DeterministicPolicy()
 
@@ -44,18 +53,23 @@ def _make_agents(config: SimulationConfig):
     """Create agents with initial resources per the configured distribution."""
     if config.policy_type == "llm":
         logger.info(
-            "Creating independent LLMPolicy instances for each agent: model=%s api_base_url=%s",
+            "Creating shared LLMPolicy for agents: model=%s api_base_url=%s",
             config.llm_model,
             config.llm_api_base_url,
         )
+        shared_policy = LLMPolicy(
+            model=config.llm_model,
+            api_base_url=config.llm_api_base_url,
+            timeout=config.llm_timeout,
+            decision_interval=config.decision_interval,
+            max_concurrent_llm_calls=config.max_concurrent_llm_calls,
+            batch_size=config.llm_batch_size,
+            enable_async=config.enable_async_llm,
+            debug_llm=config.debug_llm,
+        )
 
         def agent_policy():
-            return LLMPolicy(
-                model=config.llm_model,
-                api_base_url=config.llm_api_base_url,
-                timeout=config.llm_timeout,
-                decision_interval=config.decision_interval,
-            )
+            return shared_policy
 
     else:
         shared_policy = _make_policy(config)

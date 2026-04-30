@@ -1,9 +1,11 @@
 import random
 import logging
+import asyncio
 from collections import defaultdict
-from typing import Any
+from typing import Any, Dict
 
 from simulation.config import SimulationConfig
+from simulation.policies.llm_policy import LLMPolicy, batch_agents
 
 # Set up logger for environment debugging
 logger = logging.getLogger(__name__)
@@ -34,6 +36,26 @@ class Environment:
         self.config = config if config is not None else SimulationConfig()
         self.interaction_graph: defaultdict[Any, set] = defaultdict(set)
         self._inject_agent_context()
+        # Spread first-update timestamps so agents don't all become due at the
+        # same cycle (thundering herd).  Without this, all 100 agents fire
+        # simultaneously at cycle (decision_interval - 1), serialising every
+        # LLM batch call into one huge blocking burst.
+        self._stagger_strategy_update_offsets()
+
+    def _stagger_strategy_update_offsets(self) -> None:
+        """Distribute initial strategy-update timestamps across [0, decision_interval).
+
+        All agents start with ``last_strategy_update_step = -1``, which means
+        they all become due at the same cycle (``decision_interval - 1``).  This
+        assigns each agent a distinct random offset so that roughly
+        ``num_agents / decision_interval`` agents update per cycle instead of all
+        at once, spreading LLM load evenly over time.
+        """
+        decision_interval = getattr(self.config, "decision_interval", 15)
+        for agent in self.agents:
+            # Negative offset puts the "last update" conceptually in the past;
+            # the agent becomes due once cycle_count reaches the gap.
+            agent.last_strategy_update_step = -(random.randint(1, decision_interval))
 
     def _inject_agent_context(self) -> None:
         """Attach environment conditions and population snapshot to each agent."""
@@ -61,9 +83,21 @@ class Environment:
             return "was_exploited"
         return "unknown"
 
+    def _payoff_reward(self, my_action: str, other_action: str) -> float:
+        """Return per-agent payoff from the standard 2x2 cooperation matrix."""
+        if my_action == "cooperate" and other_action == "cooperate":
+            return 3.0
+        if my_action == "defect" and other_action == "cooperate":
+            return 5.0
+        if my_action == "cooperate" and other_action == "defect":
+            return 0.0
+        if my_action == "defect" and other_action == "defect":
+            return 1.0
+        return 0.0
+
     def _latest_decision_record(self, agent, other_agent_id):
         """Return the latest decision record for a specific opponent."""
-        for record in reversed(agent.memory_log):
+        for record in reversed(agent.interaction_memory):
             if (
                 record.get("action") == "decide_action"
                 and record.get("other_agent_id") == other_agent_id
@@ -75,7 +109,7 @@ class Environment:
         """Log parsed decision and realized outcome for analysis."""
         decision_record = self._latest_decision_record(agent, other_agent.agent_id)
         outcome = self._interaction_outcome(my_action, other_action)
-        agent.memory_log.append(
+        agent.interaction_memory.append(
             {
                 "action": "decision_outcome",
                 "policy": decision_record.get("policy") if decision_record else None,
@@ -89,6 +123,82 @@ class Environment:
                 "cycle": self.cycle_count,
             }
         )
+
+    async def _safe_maybe_update_strategy_async(self, agent, decision_interval: int) -> None:
+        """Run one agent strategy update without allowing task exceptions to bubble."""
+        try:
+            await agent.maybe_update_strategy_async(self.cycle_count, decision_interval)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Async strategy update failed agent_id=%s error=%s",
+                getattr(agent, "agent_id", "unknown"),
+                exc,
+            )
+
+    async def _update_strategies_async(self, decision_interval: int) -> None:
+        """Update standing strategies concurrently using batching for shared LLM policies."""
+        llm_groups: dict[int, dict[str, Any]] = {}
+        non_batch_agents = []
+
+        for agent in self.agents:
+            if not hasattr(agent, "maybe_update_strategy_async"):
+                continue
+            policy = getattr(agent, "policy", None)
+            if (
+                isinstance(policy, LLMPolicy)
+                and getattr(policy, "enable_async", True)
+                and hasattr(policy, "generate_strategies_batch_async")
+            ):
+                group = llm_groups.setdefault(id(policy), {"policy": policy, "agents": []})
+                group["agents"].append(agent)
+            else:
+                non_batch_agents.append(agent)
+
+        tasks = [
+            self._safe_maybe_update_strategy_async(agent, decision_interval)
+            for agent in non_batch_agents
+        ]
+
+        for group in llm_groups.values():
+            policy: LLMPolicy = group["policy"]
+            agents = group["agents"]
+            due_agents = [
+                agent
+                for agent in agents
+                if self.cycle_count - getattr(agent, "last_strategy_update_step", -1) >= decision_interval
+            ]
+            # Collect all non-empty batches, then dispatch them concurrently.
+            # The semaphore inside LLMPolicy caps actual in-flight calls at
+            # max_concurrent_llm_calls (default 4), so this never overwhelms
+            # Ollama while still eliminating the sequential-await bottleneck.
+            batches = [b for b in batch_agents(due_agents, policy.batch_size) if b]
+            if not batches:
+                continue
+
+            batch_results = await asyncio.gather(
+                *[policy.generate_strategies_batch_async(batch) for batch in batches],
+                return_exceptions=True,
+            )
+
+            for agent_batch, result in zip(batches, batch_results):
+                if isinstance(result, Exception):
+                    logger.warning("Batch strategy update failed; will fallback per-agent. error=%s", result)
+                    mapping: Dict[Any, str] = {}
+                else:
+                    mapping = result
+
+                for agent in agent_batch:
+                    action = mapping.get(agent.agent_id)
+                    if action is None:
+                        # Agent-level fallback path if batch omitted this agent.
+                        tasks.append(self._safe_maybe_update_strategy_async(agent, decision_interval))
+                        continue
+                    if action != agent.strategy and random.random() < 0.3:
+                        agent.strategy = action
+                    agent.last_strategy_update_step = self.cycle_count
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
     
     def step(self):
         """
@@ -119,9 +229,19 @@ class Environment:
         # Each agent checks whether its update interval has elapsed; if so, the
         # LLM is queried once for a new standing strategy.  All interactions
         # below use that strategy without any further LLM calls.
-        for agent in self.agents:
-            if hasattr(agent, "maybe_update_strategy"):
-                agent.maybe_update_strategy(self.cycle_count, decision_interval)
+        async_mode_enabled = getattr(self.config, "enable_async_llm", True)
+        if async_mode_enabled:
+            try:
+                asyncio.run(self._update_strategies_async(decision_interval))
+            except RuntimeError:
+                # If already in an event loop, keep simulation progressing via sync fallback.
+                for agent in self.agents:
+                    if hasattr(agent, "maybe_update_strategy"):
+                        agent.maybe_update_strategy(self.cycle_count, decision_interval)
+        else:
+            for agent in self.agents:
+                if hasattr(agent, "maybe_update_strategy"):
+                    agent.maybe_update_strategy(self.cycle_count, decision_interval)
 
         # Per-step scarcity decay: each agent loses a small fraction of a
         # resource unit proportional to scarcity_level.  A decay_factor of 0.1
@@ -211,15 +331,20 @@ class Environment:
                     if action1 == "defect":
                         agent2.update_trust(agent1.agent_id, -0.05)
             
+            # Learning rewards use a full payoff matrix so non-mutual outcomes still
+            # carry signal for strategy updates and LLM memory summaries.
+            reward1 = self._payoff_reward(action1, action2) if action1 is not None and action2 is not None else 0.0
+            reward2 = self._payoff_reward(action2, action1) if action1 is not None and action2 is not None else 0.0
+
             # If both agents cooperate, grant each a resource reward from the environment.
             # Delegated through Agent.receive_resource() for consistent validation and logging.
             # scarcity_level controls reward availability: higher scarcity = lower probability.
             # When enable_elite_advantage is True, the wealthier agent receives a bonus on
             # top of the base reward, scaled by elite_advantage_factor.
-            # reward1/reward2 represent the resource gain from this interaction:
+            # resource_gain1/resource_gain2 represent resource gain from this interaction:
             #   mutual cooperation → base_reward (≥1) if scarcity roll passes, else 0.0
             #   any defection scenario → 0.0 (no cooperative surplus is created)
-            reward1 = reward2 = 0.0
+            resource_gain1 = resource_gain2 = 0.0
             if action1 == "cooperate" and action2 == "cooperate":
                 cooperation_count += 1
                 scarcity_roll = random.random()
@@ -237,24 +362,26 @@ class Environment:
                         bonus = elite_advantage_factor - 1.0  # e.g. 0.2 for factor=1.2
                         extra = int(bonus) + (1 if random.random() < (bonus % 1) else 0)
                         if agent1.resources >= agent2.resources:
-                            reward1 = base_reward + extra
-                            reward2 = base_reward
+                            resource_gain1 = base_reward + extra
+                            resource_gain2 = base_reward
                         else:
-                            reward1 = base_reward
-                            reward2 = base_reward + extra
+                            resource_gain1 = base_reward
+                            resource_gain2 = base_reward + extra
                     else:
-                        reward1 = reward2 = base_reward
+                        resource_gain1 = resource_gain2 = base_reward
 
                     logger.debug(f"Cycle {self.cycle_count}: Granting resources to agents {agent1.agent_id} and {agent2.agent_id}")
                     if hasattr(agent1, 'receive_resource'):
-                        agent1.receive_resource(reward1, source="cooperation_reward")
+                        agent1.receive_resource(resource_gain1, source="cooperation_reward")
                     if hasattr(agent2, 'receive_resource'):
-                        agent2.receive_resource(reward2, source="cooperation_reward")
+                        agent2.receive_resource(resource_gain2, source="cooperation_reward")
                 else:
                     logger.debug(f"Cycle {self.cycle_count}: Scarcity prevented reward (roll {scarcity_roll:.3f} <= {scarcity_level})")
 
             # --- Log this interaction to each agent's flat interaction_memory ---
             # Capped at memory_size; oldest entry evicted when limit is reached.
+            # Keep explicit reward fields for both sides so learning signals are
+            # always present in per-interaction memory entries.
             if action1 is not None and action2 is not None:
                 if hasattr(agent1, 'interaction_memory'):
                     agent1.interaction_memory.append({
@@ -351,7 +478,19 @@ class Environment:
                     "Cycle %d: Summary - %d cooperation pairs, %d rewards granted (no agents)",
                     self.cycle_count - 1, cooperation_count, reward_count,
                 )
-    
+
+    async def step_async(self) -> None:
+        """Async variant of ``step()`` for FastAPI / async callers.
+
+        Runs ``step()`` in a worker thread via ``asyncio.to_thread`` so that
+        the internal ``asyncio.run()`` call inside ``step()`` can create its
+        own event loop without conflicting with the caller's running loop.
+        FastAPI's uvicorn event loop is not blocked while strategy updates
+        and interactions execute.  The shared ``httpx.Client`` inside
+        ``LLMPolicy`` remains alive across steps and reuses TCP connections.
+        """
+        await asyncio.to_thread(self.step)
+
     def pair_agents(self):
         """
         Randomly shuffle agents and return agent pairs for interaction.

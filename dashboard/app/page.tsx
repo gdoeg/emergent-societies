@@ -12,7 +12,7 @@ import PowerChart from "@/components/charts/PowerChart";
 import NetworkChart from "@/components/charts/NetworkChart";
 import DistributionChart from "@/components/charts/DistributionChart";
 
-const POLL_INTERVAL_MS = 1000;
+const POLL_INTERVAL_MS = 3000;
 
 export default function Home() {
   const [metrics, setMetrics] = useState<MetricEntry[]>([]);
@@ -57,8 +57,8 @@ export default function Home() {
       tint: "rgba(14,165,233,0.1)",
     },
     {
-      label: "Network Density",
-      value: latest ? latest.network_density.toFixed(4) : "—",
+      label: "LLM Fallback Rate",
+      value: latest ? `${(latest.llm_fallback_rate * 100).toFixed(1)}%` : "—",
       tint: "rgba(51,65,85,0.08)",
     },
   ];
@@ -66,8 +66,14 @@ export default function Home() {
   const railStats = [
     { label: "Avg Wealth", value: latest ? latest.avg_wealth.toFixed(1) : "—" },
     { label: "Avg Power", value: latest ? latest.avg_power.toFixed(3) : "—" },
-    { label: "Max Power", value: latest ? latest.max_power.toFixed(3) : "—" },
-    { label: "Agents", value: latest ? latest.wealth_distribution.length : "—" },
+    {
+      label: "Avg LLM Latency",
+      value: latest ? `${(latest.avg_llm_latency * 1000).toFixed(0)} ms` : "—",
+    },
+    {
+      label: "Fallbacks",
+      value: latest ? `${latest.llm_fallback_count}/${latest.llm_call_count}` : "—",
+    },
   ];
 
   const statusTone = error
@@ -138,7 +144,7 @@ export default function Home() {
               )}
             </div>
             <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-              {error ?? "Polling every second with adaptive card sizing for large displays."}
+              {error ?? "Polling every 3 seconds with adaptive card sizing for large displays."}
             </p>
           </motion.section>
 

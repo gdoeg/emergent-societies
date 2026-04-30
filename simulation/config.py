@@ -43,7 +43,14 @@ class SimulationConfig:
             to use any OpenAI-compatible provider
             (default: ``"http://localhost:11434/v1"``).
         llm_timeout: HTTP request timeout in seconds for LLM API calls
+            (default: ``3``).
+        max_concurrent_llm_calls: Maximum in-flight async LLM calls at once
             (default: ``4``).
+        llm_batch_size: Number of agents per batched LLM strategy update
+            (default: ``8``).
+        enable_async_llm: When ``True``, strategy updates run via async gather
+            with concurrency controls and batching (default: ``True``).
+        debug_llm: Emit detailed LLM debug logs when ``True``.
         decision_interval: LLM agents only call the model every
             ``decision_interval`` steps; the last decision is reused between
             calls to reduce API load (default: ``4``).
@@ -72,8 +79,13 @@ class SimulationConfig:
     policy_type: str = "llm"
     llm_model: str = "llama3"
     llm_api_base_url: str = "http://localhost:11434/v1"
-    # Reduced from 15 s → 4 s so failures are fast and non-blocking
-    llm_timeout: int = 4
+    # Timeout in seconds for LLM API calls.  5 s gives headroom for the
+    # 700–1000 ms Ollama responses seen in practice while still failing fast.
+    llm_timeout: float = 5.0
+    max_concurrent_llm_calls: int = 4
+    llm_batch_size: int = 8
+    enable_async_llm: bool = True
+    debug_llm: bool = False
     # Strategy update interval: agents ask the LLM for a new strategy every K steps
     decision_interval: int = 15
     # Cap pairwise interactions per step to bound O(n²) LLM call growth
@@ -135,6 +147,12 @@ class SimulationConfig:
         if self.llm_timeout < 1:
             raise ValueError("llm_timeout must be at least 1 second")
 
+        if self.max_concurrent_llm_calls < 1:
+            raise ValueError("max_concurrent_llm_calls must be at least 1")
+
+        if self.llm_batch_size < 1:
+            raise ValueError("llm_batch_size must be at least 1")
+
         if self.decision_interval < 1:
             raise ValueError("decision_interval must be at least 1")
 
@@ -165,6 +183,10 @@ class SimulationConfig:
             "llm_model": self.llm_model,
             "llm_api_base_url": self.llm_api_base_url,
             "llm_timeout": self.llm_timeout,
+            "max_concurrent_llm_calls": self.max_concurrent_llm_calls,
+            "llm_batch_size": self.llm_batch_size,
+            "enable_async_llm": self.enable_async_llm,
+            "debug_llm": self.debug_llm,
             "decision_interval": self.decision_interval,
             "max_pairs_per_step": self.max_pairs_per_step,
             "chunk_size": self.chunk_size,
@@ -207,6 +229,10 @@ class SimulationConfig:
             f"llm_model={self.llm_model!r}, "
             f"llm_api_base_url={self.llm_api_base_url!r}, "
             f"llm_timeout={self.llm_timeout}, "
+            f"max_concurrent_llm_calls={self.max_concurrent_llm_calls}, "
+            f"llm_batch_size={self.llm_batch_size}, "
+            f"enable_async_llm={self.enable_async_llm}, "
+            f"debug_llm={self.debug_llm}, "
             f"decision_interval={self.decision_interval}, "
             f"max_pairs_per_step={self.max_pairs_per_step}, "
             f"chunk_size={self.chunk_size}, "

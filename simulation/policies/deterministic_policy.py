@@ -47,7 +47,7 @@ class DeterministicPolicy(AgentPolicy):
                 else "defect"
             )
 
-        agent.memory_log.append(
+        agent.interaction_memory.append(
             {
                 "action": "decide_action",
                 "policy": "deterministic",

@@ -1,14 +1,11 @@
+import random
+import asyncio
 from typing import Any, Dict, List, TypedDict
 
 # DeterministicPolicy (and all AgentPolicy subclasses) must never import from
 # simulation.agent to avoid a circular dependency.  The dependency direction is
 # always: agent -> policy, never policy -> agent.
 from simulation.policies.deterministic_policy import DeterministicPolicy
-
-# Cooperation tendency at or above this threshold seeds the initial strategy as
-# "cooperate"; below it seeds "defect".
-_COOPERATION_THRESHOLD = 0.5
-
 
 class RelationshipRecord(TypedDict):
     """Per-partner relationship state stored in Agent.relationships."""
@@ -43,7 +40,6 @@ class Agent:
         self.agent_id = agent_id
         self.resources = resources
         self.cooperation_tendency = max(0.0, min(1.0, cooperation_tendency))
-        self.memory_log = []
         self.relationships: Dict[Any, RelationshipRecord] = {}
         self.memory: Dict[Any, Dict[str, Any]] = {}
 
@@ -62,8 +58,9 @@ class Agent:
 
         # --- Periodic strategy model ---
         # Standing strategy used for all interactions until the next LLM update.
-        # Seeded from cooperation_tendency so initial behaviour is meaningful.
-        self.strategy: str = "cooperate" if cooperation_tendency >= _COOPERATION_THRESHOLD else "defect"
+        # Stochastic seeding reduces deterministic bias while remaining reproducible
+        # when the simulation's random seed is fixed.
+        self.strategy: str = "cooperate" if random.random() < self.cooperation_tendency else "defect"
         # Simulation step at which strategy was last refreshed (-1 = never updated).
         self.last_strategy_update_step: int = -1
         # Flat interaction log used as LLM context for strategy updates.
@@ -93,15 +90,7 @@ class Agent:
             delta: Amount to add to current trust (positive or negative)
         """
         rel = self.get_relationship(other_id)
-        old_trust = rel["trust"]
         rel["trust"] = max(0.0, min(1.0, rel["trust"] + delta))
-        self.memory_log.append({
-            "action": "trust_update",
-            "other_agent_id": other_id,
-            "trust_before": old_trust,
-            "trust_after": rel["trust"],
-            "delta": delta
-        })
     
     def record_interaction(self, other_id):
         """
@@ -210,7 +199,43 @@ class Agent:
             # Fallback for deterministic/non-LLM policies.
             new_strategy = policy.decide(self, None)
 
-        self.strategy = new_strategy
+        if new_strategy != self.strategy:
+            # Lower switch probability increases behavioral persistence.
+            if random.random() < 0.3:
+                self.strategy = new_strategy
+        self.last_strategy_update_step = step
+
+    async def maybe_update_strategy_async(
+        self,
+        step: int,
+        decision_interval: int,
+        llm_policy=None,
+    ) -> None:
+        """Async variant of strategy refresh, preserving sync compatibility."""
+        if step - self.last_strategy_update_step < decision_interval:
+            return
+
+        policy = llm_policy if llm_policy is not None else self.policy
+        if hasattr(policy, "generate_strategy_async"):
+            try:
+                new_strategy = await policy.generate_strategy_async(self)
+            except Exception:
+                # Keep simulation non-blocking when async policy call fails.
+                new_strategy = self.strategy
+        elif hasattr(policy, "generate_strategy"):
+            new_strategy = policy.generate_strategy(self)
+        else:
+            if hasattr(policy, "decide"):
+                maybe_value = policy.decide(self, None)
+                if asyncio.iscoroutine(maybe_value):
+                    new_strategy = await maybe_value
+                else:
+                    new_strategy = maybe_value
+            else:
+                new_strategy = self.strategy
+
+        if new_strategy != self.strategy and random.random() < 0.3:
+            self.strategy = new_strategy
         self.last_strategy_update_step = step
 
     def get_strategy_history(self) -> List[str]:
@@ -238,7 +263,7 @@ class Agent:
         """
         # Validate other_agent is a valid Agent object
         if not other_agent or not hasattr(other_agent, 'resources') or not hasattr(other_agent, 'agent_id'):
-            self.memory_log.append({
+            self.interaction_memory.append({
                 "action": "trade",
                 "status": "failed",
                 "reason": "invalid_other_agent",
@@ -249,7 +274,7 @@ class Agent:
         # Handle zero-amount trades (no-op but still logged; no relationship update since no
         # actual exchange occurred)
         if trade_amount == 0:
-            self.memory_log.append({
+            self.interaction_memory.append({
                 "action": "trade",
                 "status": "success",
                 "other_agent_id": other_agent.agent_id,
@@ -263,7 +288,7 @@ class Agent:
         # Validate trade amount
         if trade_amount > self.resources:
             # Cannot trade more resources than owned
-            self.memory_log.append({
+            self.interaction_memory.append({
                 "action": "trade",
                 "status": "failed",
                 "reason": "insufficient_resources",
@@ -275,7 +300,7 @@ class Agent:
         
         if trade_amount < 0 and abs(trade_amount) > other_agent.resources:
             # Other agent doesn't have enough resources
-            self.memory_log.append({
+            self.interaction_memory.append({
                 "action": "trade",
                 "status": "failed",
                 "reason": "other_agent_insufficient_resources",
@@ -290,7 +315,7 @@ class Agent:
         other_agent.resources += trade_amount
         
         # Log successful trade
-        self.memory_log.append({
+        self.interaction_memory.append({
             "action": "trade",
             "status": "success",
             "other_agent_id": other_agent.agent_id,
@@ -299,7 +324,7 @@ class Agent:
             "other_agent_resources_after": other_agent.resources
         })
         
-        other_agent.memory_log.append({
+        other_agent.interaction_memory.append({
             "action": "trade",
             "status": "success",
             "other_agent_id": self.agent_id,
@@ -315,7 +340,7 @@ class Agent:
         Add resources to this agent from an external source (e.g. environment reward).
         
         Use this instead of mutating `resources` directly so that every resource
-        change is validated and recorded in `memory_log`.
+        change is validated and recorded in `interaction_memory`.
         
         Args:
             amount: Positive number of resources to add
@@ -324,7 +349,7 @@ class Agent:
         if amount <= 0:
             return
         self.resources += amount
-        self.memory_log.append({
+        self.interaction_memory.append({
             "action": "receive_resource",
             "amount": amount,
             "source": source,
@@ -333,23 +358,23 @@ class Agent:
     
     def communicate(self, other_agent, message):
         """
-        Store communication events in memory_log.
+        Store communication events in interaction_memory.
         
         Args:
             other_agent: The agent to communicate with
             message: The message content to send
         """
         # Log the communication event
-        self.memory_log.append({
+        self.interaction_memory.append({
             "action": "communicate",
             "other_agent_id": other_agent.agent_id if (other_agent and hasattr(other_agent, 'agent_id')) else None,
             "message": message,
             "my_resources": self.resources
         })
         
-        # Optionally log receipt on other agent's memory
-        if other_agent and hasattr(other_agent, 'memory_log') and hasattr(other_agent, 'agent_id'):
-            other_agent.memory_log.append({
+        # Optionally log receipt on other agent's interaction memory.
+        if other_agent and hasattr(other_agent, 'interaction_memory') and hasattr(other_agent, 'agent_id'):
+            other_agent.interaction_memory.append({
                 "action": "received_communication",
                 "from_agent_id": self.agent_id,
                 "message": message,

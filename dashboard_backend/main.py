@@ -37,18 +37,23 @@ app.add_middleware(
 def _make_agents(config: SimulationConfig):
     if config.policy_type == "llm":
         logger.info(
-            "Creating independent LLMPolicy instances for backend agents: model=%s api_base_url=%s",
+            "Creating shared LLMPolicy for backend agents: model=%s api_base_url=%s",
             config.llm_model,
             config.llm_api_base_url,
         )
+        shared_policy = LLMPolicy(
+            model=config.llm_model,
+            api_base_url=config.llm_api_base_url,
+            timeout=config.llm_timeout,
+            decision_interval=config.decision_interval,
+            max_concurrent_llm_calls=config.max_concurrent_llm_calls,
+            batch_size=config.llm_batch_size,
+            enable_async=config.enable_async_llm,
+            debug_llm=config.debug_llm,
+        )
 
         def agent_policy():
-            return LLMPolicy(
-                model=config.llm_model,
-                api_base_url=config.llm_api_base_url,
-                timeout=config.llm_timeout,
-                decision_interval=config.decision_interval,
-            )
+            return shared_policy
 
     else:
         shared_policy = _make_policy(config)
@@ -79,6 +84,10 @@ def _make_policy(config: SimulationConfig):
             api_base_url=config.llm_api_base_url,
             timeout=config.llm_timeout,
             decision_interval=config.decision_interval,
+            max_concurrent_llm_calls=config.max_concurrent_llm_calls,
+            batch_size=config.llm_batch_size,
+            enable_async=config.enable_async_llm,
+            debug_llm=config.debug_llm,
         )
 
     logger.info("Using DeterministicPolicy in backend")
@@ -117,6 +126,27 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
     powers = [compute_power(a) for a in env.agents]
     graph = env.interaction_graph
     n = len(env.agents)
+    llm_call_count = 0
+    llm_fallback_count = 0
+    llm_total_latency_seconds = 0.0
+    llm_latency_samples = 0
+    seen_policy_ids = set()
+
+    for agent in env.agents:
+        policy = getattr(agent, "policy", None)
+        if isinstance(policy, LLMPolicy) and id(policy) not in seen_policy_ids:
+            seen_policy_ids.add(id(policy))
+            llm_call_count += getattr(policy, "_llm_call_count", 0)
+            llm_fallback_count += getattr(policy, "_fallback_count", 0)
+            llm_total_latency_seconds += getattr(policy, "_llm_total_latency_seconds", 0.0)
+            llm_latency_samples += getattr(policy, "_llm_latency_samples", 0)
+
+    llm_fallback_rate = (
+        (llm_fallback_count / llm_call_count) if llm_call_count > 0 else 0.0
+    )
+    avg_llm_latency = (
+        (llm_total_latency_seconds / llm_latency_samples) if llm_latency_samples > 0 else 0.0
+    )
 
     # Strategy distribution: count agents currently on each standing strategy.
     cooperating = sum(1 for a in env.agents if getattr(a, "strategy", None) == "cooperate")
@@ -133,6 +163,10 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         "average_degree": average_degree(graph),
         "network_density": network_density(graph, n),
         "wealth_distribution": resources,
+        "llm_call_count": llm_call_count,
+        "llm_fallback_count": llm_fallback_count,
+        "llm_fallback_rate": llm_fallback_rate,
+        "avg_llm_latency": avg_llm_latency,
         # Strategy breakdown for dashboard visualization
         "pct_cooperating": round(pct_cooperating, 2),
         "strategy_counts": {"cooperate": cooperating, "defect": defecting},
@@ -155,18 +189,24 @@ def get_metrics():
 
 
 @app.post("/run")
-def run_simulation(
+async def run_simulation(
     run_request: RunRequest | None = Body(default=None),
     steps: int | None = Query(default=None),
 ):
-    """Run the simulation for the given number of steps and record metrics."""
+    """Run the simulation for the given number of steps and record metrics.
+
+    The endpoint is async so uvicorn's event loop is not blocked while steps
+    execute.  Each step runs in a worker thread (via ``step_async``), which
+    allows the internal ``asyncio.run()`` to create its own loop for concurrent
+    LLM strategy updates without conflicting with the FastAPI event loop.
+    """
     resolved_steps = steps if steps is not None else (run_request.steps if run_request else 10)
     resolved_steps = max(1, resolved_steps)
 
     _seed_metrics_history()
     logger.info("POST /run steps=%s", resolved_steps)
     for _ in range(resolved_steps):
-        _env.step()
+        await _env.step_async()
         _metrics_history.append(_snapshot_metrics(_env, _config))
     logger.info("Current tick: %d", _env.cycle_count)
     return {"status": "ok", "steps_run": resolved_steps, "current_tick": _env.cycle_count}
