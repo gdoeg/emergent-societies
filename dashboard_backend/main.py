@@ -86,10 +86,14 @@ def _make_policy(config: SimulationConfig):
 
 
 def _new_environment():
-    config = SimulationConfig(resource_distribution="random", policy_type="deterministic")
+    config = SimulationConfig(resource_distribution="random", policy_type="llm")
     agents = _make_agents(config)
     env = Environment(agents, config=config)
-    logger.info("Environment initialized with %d agents", config.num_agents)
+    logger.info(
+        "Environment initialized with %d agents using %s policy",
+        config.num_agents,
+        config.policy_type,
+    )
     return env, config
 
 
