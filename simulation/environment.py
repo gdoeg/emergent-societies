@@ -216,6 +216,9 @@ class Environment:
             # scarcity_level controls reward availability: higher scarcity = lower probability.
             # When enable_elite_advantage is True, the wealthier agent receives a bonus on
             # top of the base reward, scaled by elite_advantage_factor.
+            # reward1/reward2 represent the resource gain from this interaction:
+            #   mutual cooperation → base_reward (≥1) if scarcity roll passes, else 0.0
+            #   any defection scenario → 0.0 (no cooperative surplus is created)
             reward1 = reward2 = 0.0
             if action1 == "cooperate" and action2 == "cooperate":
                 cooperation_count += 1

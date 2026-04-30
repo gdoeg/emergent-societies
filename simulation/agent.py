@@ -5,6 +5,10 @@ from typing import Any, Dict, List, TypedDict
 # always: agent -> policy, never policy -> agent.
 from simulation.policies.deterministic_policy import DeterministicPolicy
 
+# Cooperation tendency at or above this threshold seeds the initial strategy as
+# "cooperate"; below it seeds "defect".
+_COOPERATION_THRESHOLD = 0.5
+
 
 class RelationshipRecord(TypedDict):
     """Per-partner relationship state stored in Agent.relationships."""
@@ -59,7 +63,7 @@ class Agent:
         # --- Periodic strategy model ---
         # Standing strategy used for all interactions until the next LLM update.
         # Seeded from cooperation_tendency so initial behaviour is meaningful.
-        self.strategy: str = "cooperate" if cooperation_tendency >= 0.5 else "defect"
+        self.strategy: str = "cooperate" if cooperation_tendency >= _COOPERATION_THRESHOLD else "defect"
         # Simulation step at which strategy was last refreshed (-1 = never updated).
         self.last_strategy_update_step: int = -1
         # Flat interaction log used as LLM context for strategy updates.
@@ -190,9 +194,11 @@ class Agent:
             step: Current simulation step counter.
             decision_interval: Minimum number of steps between LLM strategy
                 updates.  Matches ``SimulationConfig.decision_interval``.
-            llm_policy: Optional policy override.  When ``None``, the agent's
-                own :attr:`policy` is used.  Must implement
-                ``generate_strategy(agent) -> str``.
+            llm_policy: Optional policy override.  When ``None`` (the normal
+                case), the agent's own :attr:`policy` is used.  Pass an
+                explicit policy when testing with a mock policy or when the
+                same shared LLM policy should drive multiple agents.  Must
+                implement ``generate_strategy(agent) -> str``.
         """
         if step - self.last_strategy_update_step < decision_interval:
             return
