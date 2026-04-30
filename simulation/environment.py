@@ -93,13 +93,15 @@ class Environment:
     def step(self):
         """
         Execute one simulation cycle:
+        - Trigger periodic LLM strategy updates for all agents
         - Apply per-step resource decay based on scarcity_level
-        - Randomly pair agents
+        - Randomly pair agents (capped at max_pairs_per_step)
         - Optionally exchange intent signals (gated by communication_enabled)
-        - Trigger decision-making interactions
+        - Resolve interactions using each agent's standing strategy (no LLM)
         - If both agents cooperate, attempt to grant a resource reward
           (probability reduced by scarcity_level; richer agent receives an
           amplified reward when enable_elite_advantage is True)
+        - Log each interaction to agent.interaction_memory (capped at memory_size)
         - Redistribute resources between pairs using redistribution_strength
           (only when gap exceeds trade_threshold)
         - Increment cycle_count
@@ -110,6 +112,16 @@ class Environment:
         trade_threshold = self.config.trade_threshold
         elite_advantage_factor = self.config.elite_advantage_factor
         enable_elite_advantage = self.config.enable_elite_advantage
+        decision_interval = getattr(self.config, "decision_interval", 15)
+        memory_size = getattr(self.config, "memory_size", 50)
+
+        # --- Step 1: Periodic strategy updates (only LLM calls happen here) ---
+        # Each agent checks whether its update interval has elapsed; if so, the
+        # LLM is queried once for a new standing strategy.  All interactions
+        # below use that strategy without any further LLM calls.
+        for agent in self.agents:
+            if hasattr(agent, "maybe_update_strategy"):
+                agent.maybe_update_strategy(self.cycle_count, decision_interval)
 
         # Per-step scarcity decay: each agent loses a small fraction of a
         # resource unit proportional to scarcity_level.  A decay_factor of 0.1
@@ -144,9 +156,21 @@ class Environment:
                 if hasattr(agent2, 'communicate'):
                     agent2.communicate(agent1, "intent")
 
-            # Trigger decision-making for both agents
-            action1 = agent1.decide_action(agent2) if hasattr(agent1, 'decide_action') else None
-            action2 = agent2.decide_action(agent1) if hasattr(agent2, 'decide_action') else None
+            # --- Step 2: Fast strategy-based action lookup (no LLM) ---
+            # Prefer get_action (strategy model) over decide_action (legacy LLM path).
+            if hasattr(agent1, 'get_action'):
+                action1 = agent1.get_action(agent2)
+            elif hasattr(agent1, 'decide_action'):
+                action1 = agent1.decide_action(agent2)
+            else:
+                action1 = None
+
+            if hasattr(agent2, 'get_action'):
+                action2 = agent2.get_action(agent1)
+            elif hasattr(agent2, 'decide_action'):
+                action2 = agent2.decide_action(agent1)
+            else:
+                action2 = None
             
             logger.debug(f"Cycle {self.cycle_count}: Agent {agent1.agent_id} -> {action1}, Agent {agent2.agent_id} -> {action2}")
             
@@ -192,6 +216,10 @@ class Environment:
             # scarcity_level controls reward availability: higher scarcity = lower probability.
             # When enable_elite_advantage is True, the wealthier agent receives a bonus on
             # top of the base reward, scaled by elite_advantage_factor.
+            # reward1/reward2 represent the resource gain from this interaction:
+            #   mutual cooperation → base_reward (≥1) if scarcity roll passes, else 0.0
+            #   any defection scenario → 0.0 (no cooperative surplus is created)
+            reward1 = reward2 = 0.0
             if action1 == "cooperate" and action2 == "cooperate":
                 cooperation_count += 1
                 scarcity_roll = random.random()
@@ -224,6 +252,31 @@ class Environment:
                         agent2.receive_resource(reward2, source="cooperation_reward")
                 else:
                     logger.debug(f"Cycle {self.cycle_count}: Scarcity prevented reward (roll {scarcity_roll:.3f} <= {scarcity_level})")
+
+            # --- Log this interaction to each agent's flat interaction_memory ---
+            # Capped at memory_size; oldest entry evicted when limit is reached.
+            if action1 is not None and action2 is not None:
+                if hasattr(agent1, 'interaction_memory'):
+                    agent1.interaction_memory.append({
+                        "step": self.cycle_count,
+                        "opponent_id": agent2.agent_id,
+                        "action": action1,
+                        "opponent_action": action2,
+                        "reward": reward1,
+                    })
+                    if len(agent1.interaction_memory) > memory_size:
+                        agent1.interaction_memory.pop(0)
+
+                if hasattr(agent2, 'interaction_memory'):
+                    agent2.interaction_memory.append({
+                        "step": self.cycle_count,
+                        "opponent_id": agent1.agent_id,
+                        "action": action2,
+                        "opponent_action": action1,
+                        "reward": reward2,
+                    })
+                    if len(agent2.interaction_memory) > memory_size:
+                        agent2.interaction_memory.pop(0)
         
         # Redistribution: transfer resources from the richer agent to the poorer one
         # only when the gap exceeds trade_threshold.  The transfer amount is scaled by

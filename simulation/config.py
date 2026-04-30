@@ -53,6 +53,9 @@ class SimulationConfig:
         chunk_size: Number of simulation steps executed per ``run_steps``
             chunk.  Callers can use ``run_steps`` to avoid blocking for a
             full ``num_steps`` run (default: ``10``).
+        memory_size: Maximum number of interaction records kept in each
+            agent's ``interaction_memory`` list.  Older entries are evicted
+            when the limit is reached (default: ``50``).
     """
 
     num_agents: int = 100
@@ -71,12 +74,14 @@ class SimulationConfig:
     llm_api_base_url: str = "http://localhost:11434/v1"
     # Reduced from 15 s → 4 s so failures are fast and non-blocking
     llm_timeout: int = 4
-    # LLM throttling: reuse last decision for this many steps before re-querying
-    decision_interval: int = 4
+    # Strategy update interval: agents ask the LLM for a new strategy every K steps
+    decision_interval: int = 15
     # Cap pairwise interactions per step to bound O(n²) LLM call growth
     max_pairs_per_step: int = 15
     # Chunk size for run_steps(); avoids blocking on a full num_steps run
     chunk_size: int = 10
+    # Maximum entries retained in each agent's flat interaction_memory list
+    memory_size: int = 50
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -139,6 +144,9 @@ class SimulationConfig:
         if self.chunk_size < 1:
             raise ValueError("chunk_size must be at least 1")
 
+        if self.memory_size < 1:
+            raise ValueError("memory_size must be at least 1")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -160,6 +168,7 @@ class SimulationConfig:
             "decision_interval": self.decision_interval,
             "max_pairs_per_step": self.max_pairs_per_step,
             "chunk_size": self.chunk_size,
+            "memory_size": self.memory_size,
         }
 
     @classmethod
@@ -200,5 +209,6 @@ class SimulationConfig:
             f"llm_timeout={self.llm_timeout}, "
             f"decision_interval={self.decision_interval}, "
             f"max_pairs_per_step={self.max_pairs_per_step}, "
-            f"chunk_size={self.chunk_size})"
+            f"chunk_size={self.chunk_size}, "
+            f"memory_size={self.memory_size})"
         )

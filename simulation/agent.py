@@ -1,9 +1,13 @@
-from typing import Any, Dict, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 # DeterministicPolicy (and all AgentPolicy subclasses) must never import from
 # simulation.agent to avoid a circular dependency.  The dependency direction is
 # always: agent -> policy, never policy -> agent.
 from simulation.policies.deterministic_policy import DeterministicPolicy
+
+# Cooperation tendency at or above this threshold seeds the initial strategy as
+# "cooperate"; below it seeds "defect".
+_COOPERATION_THRESHOLD = 0.5
 
 
 class RelationshipRecord(TypedDict):
@@ -55,6 +59,16 @@ class Agent:
         # to condition decisions without requiring shared policy state.
         self.simulation_context: Dict[str, Any] = {}
         self.population_resources_snapshot = []
+
+        # --- Periodic strategy model ---
+        # Standing strategy used for all interactions until the next LLM update.
+        # Seeded from cooperation_tendency so initial behaviour is meaningful.
+        self.strategy: str = "cooperate" if cooperation_tendency >= _COOPERATION_THRESHOLD else "defect"
+        # Simulation step at which strategy was last refreshed (-1 = never updated).
+        self.last_strategy_update_step: int = -1
+        # Flat interaction log used as LLM context for strategy updates.
+        # Structure per entry: {step, opponent_id, action, opponent_action, reward}
+        self.interaction_memory: List[Dict[str, Any]] = []
     
     def get_relationship(self, other_id) -> RelationshipRecord:
         """
@@ -146,6 +160,69 @@ class Agent:
             return "defect"
 
         return self.policy.decide(self, context)
+
+    def get_action(self, opponent) -> str:
+        """Return the agent's current standing strategy without an LLM call.
+
+        This is the fast interaction path used during every simulation step.
+        Strategy is only updated periodically via :meth:`maybe_update_strategy`.
+
+        Args:
+            opponent: The other agent in the interaction (unused — strategy is
+                not opponent-specific, but accepted for interface consistency).
+
+        Returns:
+            ``"cooperate"`` or ``"defect"``.
+        """
+        if not self.alive or self.resources <= 0:
+            self.alive = False
+            return "defect"
+        return self.strategy
+
+    def maybe_update_strategy(
+        self,
+        step: int,
+        decision_interval: int,
+        llm_policy=None,
+    ) -> None:
+        """Refresh :attr:`strategy` via LLM when the update interval has elapsed.
+
+        LLM calls are concentrated here (rare) rather than on every interaction
+        (frequent) so that 100-agent simulations remain tractable.
+
+        Args:
+            step: Current simulation step counter.
+            decision_interval: Minimum number of steps between LLM strategy
+                updates.  Matches ``SimulationConfig.decision_interval``.
+            llm_policy: Optional policy override.  When ``None`` (the normal
+                case), the agent's own :attr:`policy` is used.  Pass an
+                explicit policy when testing with a mock policy or when the
+                same shared LLM policy should drive multiple agents.  Must
+                implement ``generate_strategy(agent) -> str``.
+        """
+        if step - self.last_strategy_update_step < decision_interval:
+            return
+
+        policy = llm_policy if llm_policy is not None else self.policy
+        if hasattr(policy, "generate_strategy"):
+            new_strategy = policy.generate_strategy(self)
+        else:
+            # Fallback for deterministic/non-LLM policies.
+            new_strategy = policy.decide(self, None)
+
+        self.strategy = new_strategy
+        self.last_strategy_update_step = step
+
+    def get_strategy_history(self) -> List[str]:
+        """Return the sequence of actions from :attr:`interaction_memory`.
+
+        Useful for analysis — shows how the agent actually behaved over time
+        regardless of what its current standing strategy is.
+
+        Returns:
+            List of ``"cooperate"`` / ``"defect"`` strings, oldest first.
+        """
+        return [entry["action"] for entry in self.interaction_memory]
     
     def trade(self, other_agent, trade_amount):
         """
