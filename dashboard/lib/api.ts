@@ -12,6 +12,10 @@ export interface MetricEntry {
   average_degree: number;
   network_density: number;
   wealth_distribution: number[];
+  llm_call_count: number;
+  llm_fallback_count: number;
+  llm_fallback_rate: number;
+  avg_llm_latency: number;
 }
 
 export async function fetchMetrics(): Promise<MetricEntry[]> {

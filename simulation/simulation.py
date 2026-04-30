@@ -60,6 +60,33 @@ class Simulation:
         logger.debug(f"Step {step}: Recorded metrics - {metrics}")
         return metrics
 
-    def run(self):
-        for _ in range(self.steps):
+    def run_steps(self, n_steps: int) -> None:
+        """Execute exactly *n_steps* simulation ticks.
+
+        Prefer this over :meth:`run` when you want to process the simulation
+        in smaller batches (e.g. to update a dashboard between chunks) rather
+        than blocking until all ``num_steps`` are complete.
+
+        Args:
+            n_steps: Number of ticks to run.
+        """
+        for _ in range(n_steps):
             self.step()
+
+    def run(self):
+        """Run the full simulation in ``chunk_size`` chunks.
+
+        Chunking keeps individual blocking calls short and makes it easier for
+        callers to interleave progress reporting between chunks.
+        """
+        # When config is absent fall back to the same default defined in SimulationConfig.
+        chunk_size = (
+            self.config.chunk_size
+            if self.config is not None
+            else SimulationConfig.__dataclass_fields__["chunk_size"].default
+        )
+        remaining = self.steps
+        while remaining > 0:
+            to_run = min(chunk_size, remaining)
+            self.run_steps(to_run)
+            remaining -= to_run

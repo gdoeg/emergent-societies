@@ -43,11 +43,30 @@ class SimulationConfig:
             to use any OpenAI-compatible provider
             (default: ``"http://localhost:11434/v1"``).
         llm_timeout: HTTP request timeout in seconds for LLM API calls
-            (default: ``15``).
+            (default: ``3``).
+        max_concurrent_llm_calls: Maximum in-flight async LLM calls at once
+            (default: ``4``).
+        llm_batch_size: Number of agents per batched LLM strategy update
+            (default: ``8``).
+        enable_async_llm: When ``True``, strategy updates run via async gather
+            with concurrency controls and batching (default: ``True``).
+        debug_llm: Emit detailed LLM debug logs when ``True``.
+        decision_interval: LLM agents only call the model every
+            ``decision_interval`` steps; the last decision is reused between
+            calls to reduce API load (default: ``4``).
+        max_pairs_per_step: Maximum number of agent pairs to interact per
+            simulation step.  Random sampling is used when the pool of
+            shuffled pairs exceeds this limit (default: ``15``).
+        chunk_size: Number of simulation steps executed per ``run_steps``
+            chunk.  Callers can use ``run_steps`` to avoid blocking for a
+            full ``num_steps`` run (default: ``10``).
+        memory_size: Maximum number of interaction records kept in each
+            agent's ``interaction_memory`` list.  Older entries are evicted
+            when the limit is reached (default: ``50``).
     """
 
     num_agents: int = 100
-    num_steps: int = 500
+    num_steps: int = 100
     initial_resources: int = 10
     resource_distribution: str = "uniform"
     scarcity_level: float = 0.2
@@ -60,7 +79,21 @@ class SimulationConfig:
     policy_type: str = "llm"
     llm_model: str = "llama3"
     llm_api_base_url: str = "http://localhost:11434/v1"
-    llm_timeout: int = 15
+    # Timeout in seconds for LLM API calls.  5 s gives headroom for the
+    # 700–1000 ms Ollama responses seen in practice while still failing fast.
+    llm_timeout: float = 5.0
+    max_concurrent_llm_calls: int = 4
+    llm_batch_size: int = 8
+    enable_async_llm: bool = True
+    debug_llm: bool = False
+    # Strategy update interval: agents ask the LLM for a new strategy every K steps
+    decision_interval: int = 15
+    # Cap pairwise interactions per step to bound O(n²) LLM call growth
+    max_pairs_per_step: int = 15
+    # Chunk size for run_steps(); avoids blocking on a full num_steps run
+    chunk_size: int = 10
+    # Maximum entries retained in each agent's flat interaction_memory list
+    memory_size: int = 50
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints."""
@@ -114,6 +147,24 @@ class SimulationConfig:
         if self.llm_timeout < 1:
             raise ValueError("llm_timeout must be at least 1 second")
 
+        if self.max_concurrent_llm_calls < 1:
+            raise ValueError("max_concurrent_llm_calls must be at least 1")
+
+        if self.llm_batch_size < 1:
+            raise ValueError("llm_batch_size must be at least 1")
+
+        if self.decision_interval < 1:
+            raise ValueError("decision_interval must be at least 1")
+
+        if self.max_pairs_per_step < 1:
+            raise ValueError("max_pairs_per_step must be at least 1")
+
+        if self.chunk_size < 1:
+            raise ValueError("chunk_size must be at least 1")
+
+        if self.memory_size < 1:
+            raise ValueError("memory_size must be at least 1")
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -132,6 +183,14 @@ class SimulationConfig:
             "llm_model": self.llm_model,
             "llm_api_base_url": self.llm_api_base_url,
             "llm_timeout": self.llm_timeout,
+            "max_concurrent_llm_calls": self.max_concurrent_llm_calls,
+            "llm_batch_size": self.llm_batch_size,
+            "enable_async_llm": self.enable_async_llm,
+            "debug_llm": self.debug_llm,
+            "decision_interval": self.decision_interval,
+            "max_pairs_per_step": self.max_pairs_per_step,
+            "chunk_size": self.chunk_size,
+            "memory_size": self.memory_size,
         }
 
     @classmethod
@@ -169,5 +228,13 @@ class SimulationConfig:
             f"policy_type={self.policy_type!r}, "
             f"llm_model={self.llm_model!r}, "
             f"llm_api_base_url={self.llm_api_base_url!r}, "
-            f"llm_timeout={self.llm_timeout})"
+            f"llm_timeout={self.llm_timeout}, "
+            f"max_concurrent_llm_calls={self.max_concurrent_llm_calls}, "
+            f"llm_batch_size={self.llm_batch_size}, "
+            f"enable_async_llm={self.enable_async_llm}, "
+            f"debug_llm={self.debug_llm}, "
+            f"decision_interval={self.decision_interval}, "
+            f"max_pairs_per_step={self.max_pairs_per_step}, "
+            f"chunk_size={self.chunk_size}, "
+            f"memory_size={self.memory_size})"
         )
