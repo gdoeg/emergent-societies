@@ -2,10 +2,14 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { runSimulation, resetSimulation } from "@/lib/api";
+import { runSimulation, resetSimulation, runMultipleSimulations } from "@/lib/api";
+
+export type ViewMode = "current" | "aggregate";
 
 interface ControlsProps {
   onUpdate: () => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
   className?: string;
 }
 
@@ -13,9 +17,11 @@ function joinClasses(...values: Array<string | undefined>) {
   return values.filter(Boolean).join(" ");
 }
 
-export default function Controls({ onUpdate, className }: ControlsProps) {
+export default function Controls({ onUpdate, viewMode, onViewModeChange, className }: ControlsProps) {
   const [steps, setSteps] = useState(10);
+  const [numRuns, setNumRuns] = useState(3);
   const [running, setRunning] = useState(false);
+  const [runningMultiple, setRunningMultiple] = useState(false);
   const [resetting, setResetting] = useState(false);
 
   async function handleRun() {
@@ -28,6 +34,17 @@ export default function Controls({ onUpdate, className }: ControlsProps) {
     }
   }
 
+  async function handleRunMultiple() {
+    setRunningMultiple(true);
+    try {
+      await runMultipleSimulations(steps, numRuns);
+      onViewModeChange("aggregate");
+      onUpdate();
+    } finally {
+      setRunningMultiple(false);
+    }
+  }
+
   async function handleReset() {
     setResetting(true);
     try {
@@ -37,6 +54,8 @@ export default function Controls({ onUpdate, className }: ControlsProps) {
       setResetting(false);
     }
   }
+
+  const busy = running || runningMultiple || resetting;
 
   return (
     <motion.div
@@ -62,6 +81,35 @@ export default function Controls({ onUpdate, className }: ControlsProps) {
         </span>
       </div>
 
+      {/* View mode toggle */}
+      <div className="mb-2">
+        <p className="mb-1 text-xs font-medium text-slate-700">Data source</p>
+        <div className="flex rounded-2xl border border-slate-200 bg-white/90 p-0.5 text-xs font-semibold">
+          <button
+            onClick={() => onViewModeChange("current")}
+            className={joinClasses(
+              "flex-1 rounded-[14px] px-2 py-1 transition",
+              viewMode === "current"
+                ? "bg-slate-900 text-white shadow"
+                : "text-slate-600 hover:bg-slate-100",
+            )}
+          >
+            Current
+          </button>
+          <button
+            onClick={() => onViewModeChange("aggregate")}
+            className={joinClasses(
+              "flex-1 rounded-[14px] px-2 py-1 transition",
+              viewMode === "aggregate"
+                ? "bg-slate-900 text-white shadow"
+                : "text-slate-600 hover:bg-slate-100",
+            )}
+          >
+            Aggregate
+          </button>
+        </div>
+      </div>
+
       <div className="grid gap-2 xl:grid-cols-1">
         <div className="flex min-w-40 flex-col gap-1.5">
           <label className="text-xs font-medium text-slate-700" htmlFor="steps-input">
@@ -78,18 +126,41 @@ export default function Controls({ onUpdate, className }: ControlsProps) {
           />
         </div>
 
+        <div className="flex min-w-40 flex-col gap-1.5">
+          <label className="text-xs font-medium text-slate-700" htmlFor="num-runs-input">
+            Number of runs
+          </label>
+          <input
+            id="num-runs-input"
+            type="number"
+            min={1}
+            max={20}
+            value={numRuns}
+            onChange={(e) => setNumRuns(Number(e.target.value))}
+            className="w-full rounded-2xl border border-slate-200 bg-white/90 px-3 py-1.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
+          />
+        </div>
+
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={handleRun}
-            disabled={running}
+            disabled={busy}
             className="rounded-2xl bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition hover:bg-slate-800 disabled:opacity-50"
           >
-            {running ? "Running..." : "Run Simulation"}
+            {running ? "Running..." : "Run"}
+          </button>
+
+          <button
+            onClick={handleRunMultiple}
+            disabled={busy}
+            className="rounded-2xl bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white shadow-lg shadow-teal-900/20 transition hover:bg-teal-600 disabled:opacity-50"
+          >
+            {runningMultiple ? "Running..." : `Run ×${numRuns}`}
           </button>
 
           <button
             onClick={handleReset}
-            disabled={resetting}
+            disabled={busy}
             className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
             {resetting ? "Resetting..." : "Reset"}

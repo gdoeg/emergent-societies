@@ -20,6 +20,7 @@ from simulation.policies.deterministic_policy import DeterministicPolicy
 from simulation.policies.llm_policy import LLMPolicy
 from metrics.economics import compute_gini, compute_power
 from metrics.metrics import average_degree, network_density
+from dashboard_backend.tracker import SimulationTracker, compute_aggregate_metrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_backend")
@@ -109,15 +110,21 @@ def _new_environment():
 # Module-level environment instance
 _env, _config = _new_environment()
 _metrics_history: list = []
+_tracker = SimulationTracker()
 
 
 class RunRequest(BaseModel):
     steps: int = 10
 
 
+class RunMultipleRequest(BaseModel):
+    steps: int = 10
+    num_runs: int = 3
+
+
 @app.on_event("startup")
 def log_startup():
-    logger.info("FastAPI backend started on /metrics, /run, /reset")
+    logger.info("FastAPI backend started on /metrics, /run, /reset, /aggregate-metrics, /run-multiple")
 
 
 def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
@@ -199,17 +206,93 @@ async def run_simulation(
     execute.  Each step runs in a worker thread (via ``step_async``), which
     allows the internal ``asyncio.run()`` to create its own loop for concurrent
     LLM strategy updates without conflicting with the FastAPI event loop.
+
+    After completion the run is stored in the simulation tracker.
     """
     resolved_steps = steps if steps is not None else (run_request.steps if run_request else 10)
     resolved_steps = max(1, resolved_steps)
 
     _seed_metrics_history()
     logger.info("POST /run steps=%s", resolved_steps)
+    run_start_len = len(_metrics_history)
     for _ in range(resolved_steps):
         await _env.step_async()
         _metrics_history.append(_snapshot_metrics(_env, _config))
     logger.info("Current tick: %d", _env.cycle_count)
+
+    # Store the newly generated portion of history as a completed run.
+    run_metrics = _metrics_history[run_start_len:]
+    if run_metrics:
+        stored = _tracker.add_run(run_metrics)
+        logger.info("Stored run %s in tracker (total runs: %d)", stored.run_id, _tracker.run_count)
+
     return {"status": "ok", "steps_run": resolved_steps, "current_tick": _env.cycle_count}
+
+
+@app.post("/run-multiple")
+async def run_multiple_simulations(
+    body: RunMultipleRequest | None = Body(default=None),
+):
+    """Run the simulation *num_runs* times, each for *steps* steps.
+
+    Each run starts from a freshly initialised environment so the results are
+    independent.  All runs are stored in the tracker and the function returns
+    the aggregated metrics across all stored runs.
+    """
+    global _env, _config, _metrics_history
+
+    resolved_steps = body.steps if body else 10
+    resolved_steps = max(1, resolved_steps)
+    num_runs = body.num_runs if body else 3
+    # Cap at 20 runs to prevent unbounded memory growth and very long-running requests.
+    num_runs = max(1, min(num_runs, 20))
+
+    logger.info("POST /run-multiple runs=%d steps=%d", num_runs, resolved_steps)
+
+    for run_idx in range(num_runs):
+        _env, _config = _new_environment()
+        _metrics_history = [_snapshot_metrics(_env, _config)]
+
+        for _ in range(resolved_steps):
+            await _env.step_async()
+            _metrics_history.append(_snapshot_metrics(_env, _config))
+
+        stored = _tracker.add_run(_metrics_history)
+        logger.info(
+            "Run %d/%d complete: run_id=%s (tracker total: %d)",
+            run_idx + 1,
+            num_runs,
+            stored.run_id,
+            _tracker.run_count,
+        )
+
+    aggregate = compute_aggregate_metrics(_tracker.runs)
+    return {
+        "status": "ok",
+        "runs_completed": num_runs,
+        "total_tracked_runs": _tracker.run_count,
+        "aggregate_steps": len(aggregate),
+    }
+
+
+@app.get("/aggregate-metrics")
+def get_aggregate_metrics():
+    """Return averaged metrics across all stored simulation runs."""
+    logger.info("GET /aggregate-metrics (runs in tracker: %d)", _tracker.run_count)
+    aggregate = compute_aggregate_metrics(_tracker.runs)
+    return aggregate
+
+
+@app.get("/tracker-info")
+def get_tracker_info():
+    """Return metadata about all stored simulation runs."""
+    return {
+        "run_count": _tracker.run_count,
+        "runs": [
+            {"run_id": r.run_id, "timestamp": r.timestamp, "steps": len(r.metrics_history)}
+            for r in _tracker.runs
+        ],
+    }
 
 
 @app.post("/reset")
@@ -219,5 +302,6 @@ def reset_simulation():
     logger.info("POST /reset")
     _env, _config = _new_environment()
     _metrics_history = []
+    _tracker.clear()
     _seed_metrics_history()
     return {"status": "ok", "message": "Simulation reset"}
