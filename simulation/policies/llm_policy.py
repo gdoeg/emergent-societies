@@ -164,6 +164,110 @@ class LLMPolicy(AgentPolicy):
 
         return action
 
+    def generate_strategy(self, agent) -> str:
+        """Determine a standing strategy for *agent* based on its recent history.
+
+        Called periodically (every ``decision_interval`` steps) rather than
+        on every interaction, so LLM load stays proportional to the number of
+        agents rather than the number of interactions.
+
+        Args:
+            agent: The :class:`~simulation.agent.Agent` requesting a strategy
+                update.  Uses ``interaction_memory``, ``resources``, and
+                ``relationships`` for context.
+
+        Returns:
+            ``"cooperate"`` or ``"defect"``.
+        """
+        prompt = self._build_strategy_prompt(agent)
+        action = _FALLBACK_ACTION
+        raw_response: Optional[str] = None
+
+        try:
+            raw_response = self._call_llm(prompt)
+            action = self._parse_response(raw_response)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "LLMPolicy.generate_strategy: failed for agent %s — keeping '%s'. Error: %s",
+                agent.agent_id,
+                _FALLBACK_ACTION,
+                exc,
+            )
+
+        log_record: Dict[str, Any] = {
+            "action": "strategy_update",
+            "policy": "llm",
+            "agent_id": agent.agent_id,
+            "prompt": prompt,
+            "raw_response": raw_response,
+            "new_strategy": action,
+            "my_resources": agent.resources,
+        }
+
+        if self._policy_logger is not None:
+            self._policy_logger(log_record)
+        else:
+            logger.info(
+                "LLMPolicy strategy update: agent_id=%s new_strategy=%s",
+                agent.agent_id,
+                action,
+            )
+
+        agent.memory_log.append(log_record)
+        return action
+
+    def _build_strategy_prompt(self, agent) -> str:
+        """Build a minimal prompt for a periodic strategy update.
+
+        Intentionally compact — only own state, recent interaction history,
+        and average trust — to keep token counts low and latency within the
+        configured timeout.
+
+        Args:
+            agent: The agent requesting the strategy update.
+
+        Returns:
+            A multi-line prompt string.
+        """
+        resources = agent.resources
+        rel_wealth = self._relative_wealth_section(agent)
+
+        # Recent interactions: at most the last 10 entries from interaction_memory
+        recent = list(getattr(agent, "interaction_memory", []))[-10:]
+        if recent:
+            history_lines = "\n".join(
+                f"  - step {e['step']}: I played {e['action']}, "
+                f"opponent played {e['opponent_action']}, reward={e['reward']}"
+                for e in recent
+            )
+            history_section = f"Recent interactions:\n{history_lines}\n"
+        else:
+            history_section = "Recent interactions: none\n"
+
+        # Average trust across all known relationships
+        relationships = getattr(agent, "relationships", {})
+        if relationships:
+            avg_trust = sum(r["trust"] for r in relationships.values()) / len(relationships)
+            trust_str = f"{avg_trust:.2f}"
+        else:
+            trust_str = "no data"
+
+        env_ctx = getattr(agent, "simulation_context", {})
+        scarcity = env_ctx.get("scarcity_level", "unknown")
+
+        return (
+            "You are setting your strategy for the next several interactions "
+            "in a simulated society.\n\n"
+            f"Your state:\n"
+            f"  - Resources: {resources}\n"
+            f"  - Relative wealth: {rel_wealth}\n"
+            f"  - Average trust toward others: {trust_str}\n"
+            f"  - Scarcity level: {scarcity}\n\n"
+            f"{history_section}\n"
+            "Choose the strategy that best serves your long-term interests.\n"
+            "Respond with ONLY one word: cooperate or defect"
+        )
+
     # ------------------------------------------------------------------
     # Cache helpers
     # ------------------------------------------------------------------

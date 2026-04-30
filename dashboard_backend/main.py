@@ -113,6 +113,12 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
     powers = [compute_power(a) for a in env.agents]
     graph = env.interaction_graph
     n = len(env.agents)
+
+    # Strategy distribution: count agents currently on each standing strategy.
+    cooperating = sum(1 for a in env.agents if getattr(a, "strategy", None) == "cooperate")
+    defecting = sum(1 for a in env.agents if getattr(a, "strategy", None) == "defect")
+    pct_cooperating = (cooperating / n * 100.0) if n > 0 else 0.0
+
     return {
         "tick": env.cycle_count,
         "total_wealth": sum(resources),
@@ -123,6 +129,9 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         "average_degree": average_degree(graph),
         "network_density": network_density(graph, n),
         "wealth_distribution": resources,
+        # Strategy breakdown for dashboard visualization
+        "pct_cooperating": round(pct_cooperating, 2),
+        "strategy_counts": {"cooperate": cooperating, "defect": defecting},
     }
 
 
