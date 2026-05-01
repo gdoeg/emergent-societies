@@ -88,6 +88,7 @@ Current Python dependencies in requirements.txt:
 
 - fastapi
 - uvicorn[standard]
+- httpx
 
 ### 2 Dashboard dependencies
 
@@ -155,6 +156,16 @@ Important fields include:
 ### LLM Policy Notes
 
 When policy_type is set to llm, each agent gets its own LLMPolicy instance. The policy uses an OpenAI-compatible chat completions endpoint.
+
+Provider switching is environment-based:
+
+- Local development (default): Ollama
+- Production (Render): Groq
+
+Render environment variables:
+
+- GROQ_API_KEY=your_key_here
+- ENV=production
 
 Auth env vars:
 

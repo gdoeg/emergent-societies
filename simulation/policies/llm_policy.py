@@ -1,16 +1,16 @@
 """LLM-based agent policy using an OpenAI-compatible chat API."""
 
 import asyncio
+import concurrent.futures
 import json
 import logging
-import os
 import re
 import time
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple
-import httpx
 
 from simulation.policies.base import AgentPolicy
+from simulation.policies.llm_provider import BaseLLMProvider, OllamaProvider
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,7 @@ class LLMPolicy(AgentPolicy):
 
     def __init__(
         self,
+        provider: BaseLLMProvider,
         model: str = _DEFAULT_MODEL,
         api_base_url: str = _DEFAULT_API_BASE_URL,
         timeout: int = 3,
@@ -104,6 +105,9 @@ class LLMPolicy(AgentPolicy):
         self.model = model
         self.api_base_url = api_base_url.rstrip("/")
         self.timeout = timeout
+        # Provider abstraction lets policy logic stay unchanged while backend
+        # selection switches between local Ollama and hosted Groq.
+        self.provider: BaseLLMProvider = provider
         self._policy_logger = policy_logger
         self.enable_async = enable_async
         self.debug_llm = debug_llm
@@ -122,11 +126,14 @@ class LLMPolicy(AgentPolicy):
         self._fallback_count: int = 0
         self._llm_total_latency_seconds: float = 0.0
         self._llm_latency_samples: int = 0
-        # Persistent sync HTTP client — created once, thread-safe, reused across
-        # asyncio.to_thread() calls so TCP connections to Ollama survive steps.
-        self._sync_client: Optional[httpx.Client] = None
-        self._client_initialized = False
-        self._ensure_client_initialized()
+        if self.provider is None:
+            # Defensive fallback preserves previous local defaults if no provider
+            # is injected by the caller.
+            self.provider = OllamaProvider(
+                base_url=self.api_base_url,
+                model=self.model,
+                timeout=float(self.timeout),
+            )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -767,67 +774,24 @@ class LLMPolicy(AgentPolicy):
     # LLM call
     # ------------------------------------------------------------------
 
-    def _is_local_ollama(self) -> bool:
-        """Return True when the API endpoint points to a local Ollama instance."""
-        return (
-            self.api_base_url.startswith("http://localhost")
-            or self.api_base_url.startswith("http://127.0.0.1")
-        )
-
     def _call_llm(self, prompt: str, max_tokens: int = 20, expect_json: bool = False) -> str:
-        """Send *prompt* to the chat-completion API and return the reply text.
+        """Sync helper used by legacy sync policy methods.
 
-        Uses a persistent ``httpx.Client`` for connection pooling.  The client
-        is thread-safe so this method is safely called concurrently from
-        multiple ``asyncio.to_thread()`` tasks within the same step.
-
-        Args:
-            prompt: The user-turn message to send.
-
-        Returns:
-            The raw text content of the first assistant message.
-
-        Raises:
-            EnvironmentError: If no API key is found for non-local endpoints.
-            httpx.HTTPStatusError: If the API returns a non-2xx status.
+        max_tokens is kept for compatibility with existing call sites.
         """
-        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
-        is_local = self._is_local_ollama()
-        if not api_key and not is_local:
-            raise EnvironmentError(
-                "No LLM API key found. Set the OPENAI_API_KEY or LLM_API_KEY "
-                "environment variable."
+        del max_tokens  # handled internally by providers when needed
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.provider.generate(prompt, expect_json=expect_json))
+
+        # If called inside an existing loop, run provider generation in a
+        # dedicated worker thread with its own event loop.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                lambda: asyncio.run(self.provider.generate(prompt, expect_json=expect_json))
             )
-
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-            "temperature": 0.0,
-        }
-        if expect_json and is_local:
-            payload["format"] = "json"
-        # Instruct Ollama to keep the model loaded between calls, preventing
-        # expensive model reloads during gaps between simulation steps.
-        if is_local:
-            payload["keep_alive"] = -1
-
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        if self.debug_llm:
-            logger.info("LLM CALL url=%s/chat/completions model=%s", self.api_base_url, self.model)
-
-        response = self._sync_client.post(
-            "/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=float(self.timeout),
-        )
-        response.raise_for_status()
-        body = response.json()
-        return body["choices"][0]["message"]["content"]
+            return future.result()
 
     async def _call_llm_async(
         self,
@@ -836,9 +800,10 @@ class LLMPolicy(AgentPolicy):
         expect_json: bool = False,
     ) -> str:
         """Async LLM call with semaphore-based concurrency and hard timeout."""
+        del max_tokens  # handled internally by providers when needed
         async with self._semaphore:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._call_llm, prompt, max_tokens, expect_json),
+                self.provider.generate(prompt, expect_json=expect_json),
                 timeout=self.timeout,
             )
 
@@ -857,22 +822,6 @@ class LLMPolicy(AgentPolicy):
         if self._llm_latency_samples == 0:
             return 0.0
         return self._llm_total_latency_seconds / self._llm_latency_samples
-
-    def _ensure_client_initialized(self) -> None:
-        """Guard one-time client setup to avoid repeated model/client initialization.
-
-        Creates a persistent ``httpx.Client`` with a connection pool.  The
-        client is thread-safe, so it is safely shared by the concurrent
-        ``asyncio.to_thread()`` calls that back ``_call_llm_async``, enabling
-        TCP connection reuse across all LLM requests within a simulation step.
-        """
-        if self._client_initialized:
-            return
-        self._sync_client = httpx.Client(
-            base_url=self.api_base_url,
-            timeout=float(self.timeout),
-        )
-        self._client_initialized = True
 
     # ------------------------------------------------------------------
     # Response parsing

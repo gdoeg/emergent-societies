@@ -18,10 +18,12 @@ from simulation.agent import Agent
 from simulation.environment import Environment
 from simulation.policies.deterministic_policy import DeterministicPolicy
 from simulation.policies.llm_policy import LLMPolicy
+from simulation.policies.llm_provider import get_llm_provider
 from metrics.economics import compute_gini, compute_power
 from metrics.metrics import average_degree, network_density
 from dashboard_backend.tracker import SimulationTracker, compute_aggregate_metrics
-
+from dotenv import load_dotenv
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_backend")
 
@@ -37,12 +39,18 @@ app.add_middleware(
 
 def _make_agents(config: SimulationConfig):
     if config.policy_type == "llm":
+        provider = get_llm_provider(
+            llm_model=config.llm_model,
+            llm_api_base_url=config.llm_api_base_url,
+            llm_timeout=config.llm_timeout,
+        )
         logger.info(
             "Creating shared LLMPolicy for backend agents: model=%s api_base_url=%s",
             config.llm_model,
             config.llm_api_base_url,
         )
         shared_policy = LLMPolicy(
+            provider=provider,
             model=config.llm_model,
             api_base_url=config.llm_api_base_url,
             timeout=config.llm_timeout,
@@ -75,12 +83,18 @@ def _make_agents(config: SimulationConfig):
 
 def _make_policy(config: SimulationConfig):
     if config.policy_type == "llm":
+        provider = get_llm_provider(
+            llm_model=config.llm_model,
+            llm_api_base_url=config.llm_api_base_url,
+            llm_timeout=config.llm_timeout,
+        )
         logger.info(
             "Using LLMPolicy in backend: model=%s api_base_url=%s",
             config.llm_model,
             config.llm_api_base_url,
         )
         return LLMPolicy(
+            provider=provider,
             model=config.llm_model,
             api_base_url=config.llm_api_base_url,
             timeout=config.llm_timeout,

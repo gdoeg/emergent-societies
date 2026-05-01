@@ -7,6 +7,9 @@ from simulation.world import World
 from simulation.simulation import Simulation
 from simulation.policies.deterministic_policy import DeterministicPolicy
 from simulation.policies.llm_policy import LLMPolicy
+from simulation.policies.llm_provider import get_llm_provider
+from dotenv import load_dotenv
+load_dotenv()
 
 # Configure logging for debugging
 logging.basicConfig(
@@ -30,12 +33,18 @@ def _make_policy(config: SimulationConfig):
         An :class:`~simulation.policies.base.AgentPolicy` instance.
     """
     if config.policy_type == "llm":
+        provider = get_llm_provider(
+            llm_model=config.llm_model,
+            llm_api_base_url=config.llm_api_base_url,
+            llm_timeout=config.llm_timeout,
+        )
         logger.info(
             "Using LLMPolicy: model=%s api_base_url=%s",
             config.llm_model,
             config.llm_api_base_url,
         )
         return LLMPolicy(
+            provider=provider,
             model=config.llm_model,
             api_base_url=config.llm_api_base_url,
             timeout=config.llm_timeout,
@@ -52,12 +61,18 @@ def _make_policy(config: SimulationConfig):
 def _make_agents(config: SimulationConfig):
     """Create agents with initial resources per the configured distribution."""
     if config.policy_type == "llm":
+        provider = get_llm_provider(
+            llm_model=config.llm_model,
+            llm_api_base_url=config.llm_api_base_url,
+            llm_timeout=config.llm_timeout,
+        )
         logger.info(
             "Creating shared LLMPolicy for agents: model=%s api_base_url=%s",
             config.llm_model,
             config.llm_api_base_url,
         )
         shared_policy = LLMPolicy(
+            provider=provider,
             model=config.llm_model,
             api_base_url=config.llm_api_base_url,
             timeout=config.llm_timeout,
