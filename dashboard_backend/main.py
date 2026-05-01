@@ -27,6 +27,41 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_backend")
 
+# W&B is optional – the simulation runs normally if the package is absent.
+try:
+    import wandb
+    WANDB_ENABLED = True
+except ImportError:
+    WANDB_ENABLED = False
+    logger.info("wandb not installed – experiment tracking disabled")
+
+
+def _wandb_log_step(metrics: dict) -> None:
+    """Log per-step metrics to W&B. No-op when W&B is disabled."""
+    if not WANDB_ENABLED:
+        return
+    wandb.log({
+        "step": metrics["tick"],
+        "gini": metrics["gini"],
+        "total_wealth": metrics["total_wealth"],
+        "avg_power": metrics["avg_power"],
+        "network_density": metrics["network_density"],
+        "pct_cooperating": metrics.get("pct_cooperating", 0),
+        "llm_fallback_rate": metrics.get("llm_fallback_rate", 0),
+    })
+
+
+def _wandb_finish_run(final_metrics: dict, run_id: str, timestamp: str) -> None:
+    """Record summary metrics and close the current W&B run. No-op when disabled."""
+    if not WANDB_ENABLED:
+        return
+    wandb.summary["final_gini"] = final_metrics["gini"]
+    wandb.summary["final_total_wealth"] = final_metrics["total_wealth"]
+    wandb.summary["final_avg_power"] = final_metrics["avg_power"]
+    # Attach the tracker run_id and timestamp for cross-reference.
+    wandb.config.update({"run_id": run_id, "timestamp": timestamp})
+    wandb.finish()
+
 app = FastAPI(title="Emergent Societies Dashboard")
 
 app.add_middleware(
@@ -228,10 +263,30 @@ async def run_simulation(
 
     _seed_metrics_history()
     logger.info("POST /run steps=%s", resolved_steps)
+
+    # W&B: initialise a new run for this simulation (one run per /run call).
+    if WANDB_ENABLED:
+        wandb.init(
+            project="emergent-societies",
+            reinit=True,
+            config={
+                "num_agents": _config.num_agents,
+                "num_steps": resolved_steps,
+                "decision_interval": _config.decision_interval,
+                "batch_size": _config.llm_batch_size,
+                "max_concurrent_llm_calls": _config.max_concurrent_llm_calls,
+            },
+        )
+
     run_start_len = len(_metrics_history)
     for _ in range(resolved_steps):
         await _env.step_async()
-        _metrics_history.append(_snapshot_metrics(_env, _config))
+        metrics = _snapshot_metrics(_env, _config)
+        _metrics_history.append(metrics)
+
+        # W&B: log per-step metrics without blocking the simulation.
+        _wandb_log_step(metrics)
+
     logger.info("Current tick: %d", _env.cycle_count)
 
     # Store the newly generated portion of history as a completed run.
@@ -239,6 +294,11 @@ async def run_simulation(
     if run_metrics:
         stored = _tracker.add_run(run_metrics)
         logger.info("Stored run %s in tracker (total runs: %d)", stored.run_id, _tracker.run_count)
+
+        # W&B: record final summary metrics and close the run.
+        _wandb_finish_run(run_metrics[-1], stored.run_id, stored.timestamp)
+    elif WANDB_ENABLED:
+        wandb.finish()
 
     return {"status": "ok", "steps_run": resolved_steps, "current_tick": _env.cycle_count}
 
@@ -267,9 +327,28 @@ async def run_multiple_simulations(
         _env, _config = _new_environment()
         _metrics_history = [_snapshot_metrics(_env, _config)]
 
+        # W&B: each independent run gets its own W&B run.
+        if WANDB_ENABLED:
+            wandb.init(
+                project="emergent-societies",
+                reinit=True,
+                config={
+                    "num_agents": _config.num_agents,
+                    "num_steps": resolved_steps,
+                    "decision_interval": _config.decision_interval,
+                    "batch_size": _config.llm_batch_size,
+                    "max_concurrent_llm_calls": _config.max_concurrent_llm_calls,
+                    "run_index": run_idx,
+                },
+            )
+
         for _ in range(resolved_steps):
             await _env.step_async()
-            _metrics_history.append(_snapshot_metrics(_env, _config))
+            metrics = _snapshot_metrics(_env, _config)
+            _metrics_history.append(metrics)
+
+            # W&B: log per-step metrics for this independent run.
+            _wandb_log_step(metrics)
 
         stored = _tracker.add_run(_metrics_history)
         logger.info(
@@ -279,6 +358,9 @@ async def run_multiple_simulations(
             stored.run_id,
             _tracker.run_count,
         )
+
+        # W&B: record final summary and close this run before starting the next.
+        _wandb_finish_run(_metrics_history[-1], stored.run_id, stored.timestamp)
 
     aggregate = compute_aggregate_metrics(_tracker.runs)
     return {
