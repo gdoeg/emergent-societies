@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { fetchMetrics, MetricEntry } from "@/lib/api";
+import { fetchMetrics, fetchAggregateMetrics, MetricEntry } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
 import ChartCard from "@/components/ChartCard";
-import Controls from "@/components/Controls";
+import Controls, { ViewMode } from "@/components/Controls";
 import GiniChart from "@/components/charts/GiniChart";
 import WealthChart from "@/components/charts/WealthChart";
 import PowerChart from "@/components/charts/PowerChart";
@@ -16,13 +16,19 @@ const POLL_INTERVAL_MS = 3000;
 
 export default function Home() {
   const [metrics, setMetrics] = useState<MetricEntry[]>([]);
+  const [aggregateMetrics, setAggregateMetrics] = useState<MetricEntry[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>("current");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const data = await fetchMetrics();
-      setMetrics(data);
+      const [current, aggregate] = await Promise.all([
+        fetchMetrics(),
+        fetchAggregateMetrics(),
+      ]);
+      setMetrics(current);
+      setAggregateMetrics(aggregate);
       setError(null);
     } catch {
       setError("Could not connect to backend at http://localhost:8000");
@@ -43,7 +49,13 @@ export default function Home() {
     };
   }, [refresh]);
 
-  const latest = metrics.length > 0 ? metrics[metrics.length - 1] : null;
+  const activeMetrics = viewMode === "aggregate" ? aggregateMetrics : metrics;
+  const latest = activeMetrics.length > 0 ? activeMetrics[activeMetrics.length - 1] : null;
+
+  // run_count is only present on aggregate entries; null when not in aggregate mode.
+  const runCount: number | null =
+    viewMode === "aggregate" && latest ? (latest.run_count ?? null) : null;
+
   const metricsConfig = [
     { label: "Current Tick", value: latest ? latest.tick : "—", tint: "rgba(15,118,110,0.12)" },
     {
@@ -87,9 +99,15 @@ export default function Home() {
           className: "border-amber-200 bg-amber-50/90 text-amber-700",
         }
       : {
-          label: "Streaming metrics",
-          className: "border-emerald-200 bg-emerald-50/90 text-emerald-700",
+          label: viewMode === "aggregate" ? "Aggregate view" : "Streaming metrics",
+          className:
+            viewMode === "aggregate"
+              ? "border-teal-200 bg-teal-50/90 text-teal-700"
+              : "border-emerald-200 bg-emerald-50/90 text-emerald-700",
         };
+
+  const chartTitle = (base: string) =>
+    viewMode === "aggregate" ? `${base} (avg across ${runCount ?? "?"} runs)` : base;
 
   return (
     <DashboardLayout>
@@ -116,16 +134,16 @@ export default function Home() {
             <div className="mt-2 grid grid-cols-2 gap-1.5">
               <div className="rounded-2xl border border-white/10 bg-white/6 px-2 py-1.5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300">Samples</p>
-                <p className="mt-0.5 text-base font-semibold text-white">{metrics.length}</p>
+                <p className="mt-0.5 text-base font-semibold text-white">{activeMetrics.length}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/6 px-2 py-1.5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300">Mode</p>
-                <p className="mt-0.5 text-base font-semibold text-white">Live</p>
+                <p className="mt-0.5 text-base font-semibold text-white capitalize">{viewMode}</p>
               </div>
             </div>
           </motion.section>
 
-          <Controls onUpdate={refresh} className="lg:h-full" />
+          <Controls onUpdate={refresh} viewMode={viewMode} onViewModeChange={setViewMode} className="lg:h-full" />
 
           <motion.section
             initial={{ opacity: 0, y: 28 }}
@@ -144,7 +162,11 @@ export default function Home() {
               )}
             </div>
             <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-              {error ?? "Polling every 3 seconds with adaptive card sizing for large displays."}
+              {error ?? (
+                viewMode === "aggregate"
+                  ? `Showing averaged metrics across ${runCount ?? 0} run(s). Switch to Current to view the live simulation.`
+                  : "Polling every 3 seconds with adaptive card sizing for large displays."
+              )}
             </p>
           </motion.section>
 
@@ -192,24 +214,24 @@ export default function Home() {
           </div>
 
           <div className="mt-1.5 grid flex-1 min-h-0 min-w-0 grid-cols-1 auto-rows-fr gap-1.5 lg:grid-cols-2">
-            <ChartCard title="Wealth Distribution (latest tick)" delay={0.3} className="col-span-1" bodyClassName="h-full">
+            <ChartCard title={chartTitle("Wealth Distribution (latest tick)")} delay={0.3} className="col-span-1" bodyClassName="h-full">
               <DistributionChart latest={latest} />
             </ChartCard>
 
-            <ChartCard title="Wealth Inequality (Gini)" delay={0.1} className="col-span-1" bodyClassName="h-full">
-              <GiniChart data={metrics} />
+            <ChartCard title={chartTitle("Wealth Inequality (Gini)")} delay={0.1} className="col-span-1" bodyClassName="h-full">
+              <GiniChart data={activeMetrics} />
             </ChartCard>
 
-            <ChartCard title="Total Wealth" delay={0.15} className="col-span-1" bodyClassName="h-full">
-              <WealthChart data={metrics} />
+            <ChartCard title={chartTitle("Total Wealth")} delay={0.15} className="col-span-1" bodyClassName="h-full">
+              <WealthChart data={activeMetrics} />
             </ChartCard>
 
-            <ChartCard title="Power Metrics" delay={0.2} className="col-span-1" bodyClassName="h-full">
-              <PowerChart data={metrics} />
+            <ChartCard title={chartTitle("Power Metrics")} delay={0.2} className="col-span-1" bodyClassName="h-full">
+              <PowerChart data={activeMetrics} />
             </ChartCard>
 
-            <ChartCard title="Network Metrics" delay={0.25} className="col-span-1" bodyClassName="h-full">
-              <NetworkChart data={metrics} />
+            <ChartCard title={chartTitle("Network Metrics")} delay={0.25} className="col-span-1" bodyClassName="h-full">
+              <NetworkChart data={activeMetrics} />
             </ChartCard>
           </div>
         </section>
