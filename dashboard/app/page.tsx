@@ -4,13 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { fetchMetrics, fetchAggregateMetrics, MetricEntry } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
-import ChartCard from "@/components/ChartCard";
 import Controls, { ViewMode } from "@/components/Controls";
-import GiniChart from "@/components/charts/GiniChart";
-import WealthChart from "@/components/charts/WealthChart";
-import PowerChart from "@/components/charts/PowerChart";
-import NetworkChart from "@/components/charts/NetworkChart";
-import DistributionChart from "@/components/charts/DistributionChart";
+import SimulationCharts from "@/components/SimulationCharts";
+import AgentInsights from "@/components/AgentInsights";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -18,6 +14,7 @@ export default function Home() {
   const [metrics, setMetrics] = useState<MetricEntry[]>([]);
   const [aggregateMetrics, setAggregateMetrics] = useState<MetricEntry[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("current");
+  const [mainView, setMainView] = useState<"simulation" | "agents">("simulation");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -213,27 +210,26 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="mt-1.5 grid flex-1 min-h-0 min-w-0 grid-cols-1 auto-rows-fr gap-1.5 lg:grid-cols-2">
-            <ChartCard title={chartTitle("Wealth Distribution (latest tick)")} delay={0.3} className="col-span-1" bodyClassName="h-full">
-              <DistributionChart latest={latest} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Wealth Inequality (Gini)")} delay={0.1} className="col-span-1" bodyClassName="h-full">
-              <GiniChart data={activeMetrics} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Total Wealth")} delay={0.15} className="col-span-1" bodyClassName="h-full">
-              <WealthChart data={activeMetrics} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Power Metrics")} delay={0.2} className="col-span-1" bodyClassName="h-full">
-              <PowerChart data={activeMetrics} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Network Metrics")} delay={0.25} className="col-span-1" bodyClassName="h-full">
-              <NetworkChart data={activeMetrics} />
-            </ChartCard>
+          <div className="mt-1.5 flex rounded-[28px] border border-white/60 bg-white/85 p-0.5 shadow-[0_24px_80px_rgba(16,42,51,0.10)] backdrop-blur-sm text-xs font-semibold w-fit">
+            <button
+              onClick={() => setMainView("simulation")}
+              className={`rounded-[22px] px-4 py-1.5 transition ${mainView === "simulation" ? "bg-slate-900 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Simulation
+            </button>
+            <button
+              onClick={() => setMainView("agents")}
+              className={`rounded-[22px] px-4 py-1.5 transition ${mainView === "agents" ? "bg-slate-900 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Agents
+            </button>
           </div>
+
+          {mainView === "simulation" ? (
+            <SimulationCharts metrics={activeMetrics} chartTitle={chartTitle} />
+          ) : (
+            <AgentInsights metrics={activeMetrics} />
+          )}
         </section>
       </div>
     </DashboardLayout>
