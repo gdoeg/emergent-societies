@@ -3,6 +3,9 @@
 import { MetricEntry } from "@/lib/api";
 import ChartCard from "@/components/ChartCard";
 
+const FALLBACK_COLOR_THRESHOLD = 20;
+const ERROR_COLOR_THRESHOLD = 10;
+
 interface LLMDiagnosticsProps {
   metrics: MetricEntry[];
 }
@@ -25,8 +28,8 @@ export default function LLMDiagnostics({ metrics }: LLMDiagnosticsProps) {
   const rows = [
     { label: "Total Calls", value: calls.toString(), color: "text-slate-900" },
     { label: "Success %", value: calls > 0 ? `${successPct.toFixed(1)}%` : "—", color: "text-emerald-600" },
-    { label: "Fallback %", value: calls > 0 ? `${fallbackPct.toFixed(1)}%` : "—", color: fallbackPct > 20 ? "text-amber-600" : "text-slate-700" },
-    { label: "Error %", value: calls > 0 ? `${errorPct.toFixed(1)}%` : "—", color: errorPct > 10 ? "text-red-600" : "text-slate-700" },
+    { label: "Fallback %", value: calls > 0 ? `${fallbackPct.toFixed(1)}%` : "—", color: fallbackPct > FALLBACK_COLOR_THRESHOLD ? "text-amber-600" : "text-slate-700" },
+    { label: "Error %", value: calls > 0 ? `${errorPct.toFixed(1)}%` : "—", color: errorPct > ERROR_COLOR_THRESHOLD ? "text-red-600" : "text-slate-700" },
     { label: "Avg Latency", value: `${latency.toFixed(0)} ms`, color: "text-slate-700" },
   ];
 

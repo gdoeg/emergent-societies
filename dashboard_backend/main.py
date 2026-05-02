@@ -244,7 +244,8 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         "llm_stats": {
             "calls": llm_call_count,
             "success": llm_success_count,
-            "fallbacks": llm_fallback_count - llm_error_count,
+            # Parse-only fallbacks = total fallbacks minus exception-based errors
+            "fallbacks": max(0, llm_fallback_count - llm_error_count),
             "errors": llm_error_count,
             "latency": round(avg_llm_latency * 1000, 2),
         },
