@@ -188,6 +188,8 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
     llm_error_count = 0
     llm_total_latency_seconds = 0.0
     llm_latency_samples = 0
+    total_agent_decisions = 0
+    fallback_agent_decisions = 0
     seen_policy_ids = set()
 
     for agent in env.agents:
@@ -200,9 +202,11 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
             llm_error_count += getattr(policy, "_llm_error_count", 0)
             llm_total_latency_seconds += getattr(policy, "_llm_total_latency_seconds", 0.0)
             llm_latency_samples += getattr(policy, "_llm_latency_samples", 0)
+            total_agent_decisions += getattr(policy, "_total_agent_decisions", 0)
+            fallback_agent_decisions += getattr(policy, "_fallback_agent_decisions", 0)
 
     llm_fallback_rate = (
-        (llm_fallback_count / llm_call_count) if llm_call_count > 0 else 0.0
+        (fallback_agent_decisions / total_agent_decisions) if total_agent_decisions > 0 else 0.0
     )
     avg_llm_latency = (
         (llm_total_latency_seconds / llm_latency_samples) if llm_latency_samples > 0 else 0.0
@@ -226,6 +230,8 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         "llm_call_count": llm_call_count,
         "llm_fallback_count": llm_fallback_count,
         "llm_fallback_rate": llm_fallback_rate,
+        "total_agent_decisions": total_agent_decisions,
+        "fallback_agent_decisions": fallback_agent_decisions,
         "avg_llm_latency": avg_llm_latency,
         # Strategy breakdown for dashboard visualization
         "pct_cooperating": round(pct_cooperating, 2),

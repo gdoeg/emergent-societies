@@ -126,6 +126,13 @@ class LLMPolicy(AgentPolicy):
         self._llm_success_count: int = 0
         self._llm_error_count: int = 0
         self._fallback_count: int = 0
+        # Per-agent-decision counters used to compute an accurate fallback rate.
+        # Unlike _llm_call_count (per-request) and _fallback_count (mixed
+        # granularity), these are incremented exactly once per agent decision
+        # attempt, making fallback_rate = fallback_agent_decisions /
+        # total_agent_decisions meaningful.
+        self._total_agent_decisions: int = 0
+        self._fallback_agent_decisions: int = 0
         self._llm_total_latency_seconds: float = 0.0
         self._llm_latency_samples: int = 0
         if self.provider is None:
@@ -193,6 +200,7 @@ class LLMPolicy(AgentPolicy):
         )
         prompt_summary = self._build_prompt_summary(agent, context)
 
+        self._total_agent_decisions += 1
         try:
             if self.debug_llm:
                 logger.info("LLM CALLED agent_id=%s", agent.agent_id)
@@ -204,7 +212,6 @@ class LLMPolicy(AgentPolicy):
             if not used_fallback:
                 self._llm_success_count += 1
         except Exception as exc:  # noqa: BLE001
-            self._fallback_count += 1
             self._llm_error_count += 1
             used_fallback = True
             logger.warning(
@@ -217,6 +224,8 @@ class LLMPolicy(AgentPolicy):
             action = _FALLBACK_ACTION
 
         if used_fallback:
+            self._fallback_count += 1
+            self._fallback_agent_decisions += 1
             logger.warning(
                 "LLM fallback for agent %s: using '%s'",
                 agent.agent_id,
@@ -279,6 +288,7 @@ class LLMPolicy(AgentPolicy):
         raw_response: Optional[str] = None
         used_fallback = False
 
+        self._total_agent_decisions += 1
         try:
             if self.debug_llm:
                 logger.info("LLM CALLED agent_id=%s", agent.agent_id)
@@ -290,7 +300,6 @@ class LLMPolicy(AgentPolicy):
             if not used_fallback:
                 self._llm_success_count += 1
         except Exception as exc:  # noqa: BLE001
-            self._fallback_count += 1
             self._llm_error_count += 1
             used_fallback = True
             logger.warning(
@@ -301,6 +310,8 @@ class LLMPolicy(AgentPolicy):
             )
 
         if used_fallback:
+            self._fallback_count += 1
+            self._fallback_agent_decisions += 1
             logger.warning(
                 "LLM fallback for agent %s: using '%s'",
                 agent.agent_id,
@@ -343,6 +354,7 @@ class LLMPolicy(AgentPolicy):
         if self.debug_llm:
             logger.info("LLM CALLED agent_id=%s", agent.agent_id)
 
+        self._total_agent_decisions += 1
         try:
             self._llm_call_count += 1
             started = time.perf_counter()
@@ -353,7 +365,6 @@ class LLMPolicy(AgentPolicy):
             if not used_fallback:
                 self._llm_success_count += 1
         except asyncio.TimeoutError:
-            self._fallback_count += 1
             self._llm_error_count += 1
             used_fallback = True
             logger.warning(
@@ -362,7 +373,6 @@ class LLMPolicy(AgentPolicy):
                 self.timeout,
             )
         except Exception as exc:  # noqa: BLE001
-            self._fallback_count += 1
             self._llm_error_count += 1
             used_fallback = True
             logger.warning(
@@ -370,6 +380,10 @@ class LLMPolicy(AgentPolicy):
                 agent.agent_id,
                 exc,
             )
+
+        if used_fallback:
+            self._fallback_count += 1
+            self._fallback_agent_decisions += 1
 
         log_record: Dict[str, Any] = {
             "action": "strategy_update",
@@ -419,6 +433,9 @@ class LLMPolicy(AgentPolicy):
             if missing_agent_ids:
                 raise ValueError(f"Batch response missing agent ids: {missing_agent_ids}")
 
+            # Count every agent in the batch as one decision attempt. Per-agent
+            # parse fallbacks were already recorded inside _parse_batch_response.
+            self._total_agent_decisions += len(agent_batch)
             return mapping
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -441,7 +458,15 @@ class LLMPolicy(AgentPolicy):
 
             for agent in agent_batch:
                 if agent.agent_id not in fallback_results:
+                    # Safety net for the rare case where generate_strategy_async
+                    # raised unexpectedly (it normally always returns). These agents
+                    # were not counted by generate_strategy_async, so we account for
+                    # them here. Note: _total_agent_decisions += len(agent_batch) in
+                    # the success path above never runs when we reach this except
+                    # block, so there is no risk of double-counting.
+                    self._total_agent_decisions += 1
                     self._fallback_count += 1
+                    self._fallback_agent_decisions += 1
                     fallback_results[agent.agent_id] = _FALLBACK_ACTION
             return fallback_results
 
@@ -780,6 +805,7 @@ class LLMPolicy(AgentPolicy):
             action, used_fallback = self._parse_response_with_fallback(str(raw_action))
             if used_fallback:
                 self._fallback_count += 1
+                self._fallback_agent_decisions += 1
             mapped[valid_agent_ids[str(raw_agent_id)]] = action
         return mapped
     # ------------------------------------------------------------------
@@ -869,5 +895,4 @@ class LLMPolicy(AgentPolicy):
             text,
             _FALLBACK_ACTION,
         )
-        self._fallback_count += 1
         return _FALLBACK_ACTION, True

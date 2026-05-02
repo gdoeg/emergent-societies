@@ -57,6 +57,8 @@ _SCALAR_FIELDS = (
     "llm_call_count",
     "llm_fallback_count",
     "llm_fallback_rate",
+    "total_agent_decisions",
+    "fallback_agent_decisions",
     "avg_llm_latency",
     "pct_cooperating",
 )
