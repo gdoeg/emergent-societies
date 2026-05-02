@@ -4,13 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { fetchMetrics, fetchAggregateMetrics, MetricEntry } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
-import ChartCard from "@/components/ChartCard";
 import Controls, { ViewMode } from "@/components/Controls";
-import GiniChart from "@/components/charts/GiniChart";
-import WealthChart from "@/components/charts/WealthChart";
-import PowerChart from "@/components/charts/PowerChart";
-import NetworkChart from "@/components/charts/NetworkChart";
-import DistributionChart from "@/components/charts/DistributionChart";
+import SimulationCharts from "@/components/SimulationCharts";
+import AgentInsights from "@/components/AgentInsights";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -18,8 +14,9 @@ export default function Home() {
   const [metrics, setMetrics] = useState<MetricEntry[]>([]);
   const [aggregateMetrics, setAggregateMetrics] = useState<MetricEntry[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("current");
+  const [mainView, setMainView] = useState<"simulation" | "agents">("simulation");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -88,31 +85,13 @@ export default function Home() {
     },
   ];
 
-  const statusTone = error
-    ? {
-        label: "Backend disconnected",
-        className: "border-rose-200 bg-rose-50/90 text-rose-700",
-      }
-    : loading && !latest
-      ? {
-          label: "Fetching live metrics",
-          className: "border-amber-200 bg-amber-50/90 text-amber-700",
-        }
-      : {
-          label: viewMode === "aggregate" ? "Aggregate view" : "Streaming metrics",
-          className:
-            viewMode === "aggregate"
-              ? "border-teal-200 bg-teal-50/90 text-teal-700"
-              : "border-emerald-200 bg-emerald-50/90 text-emerald-700",
-        };
-
   const chartTitle = (base: string) =>
     viewMode === "aggregate" ? `${base} (avg across ${runCount ?? "?"} runs)` : base;
 
   return (
     <DashboardLayout>
-      <div className="grid w-full grid-cols-1 gap-2 p-2 lg:h-full lg:grid-cols-[214px_1fr] lg:p-2.5">
-        <aside className="grid min-w-0 gap-1.5 lg:min-h-0 lg:grid-rows-[auto_auto_auto_minmax(0,1fr)]">
+      <div className="grid w-full grid-cols-1 gap-2 p-2 lg:h-full lg:grid-cols-[232px_1fr] lg:p-2.5">
+        <aside className="grid min-w-0 gap-1.5 lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
           <motion.section
             initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
@@ -131,7 +110,7 @@ export default function Home() {
             <p className="mt-1 max-w-md text-[11px] leading-4 text-slate-200/86">
               An operational view of emergent dynamics in an active simulation.
             </p>
-            <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <div className="mt-2 grid grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-1.5">
               <div className="rounded-2xl border border-white/10 bg-white/6 px-2 py-1.5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300">Samples</p>
                 <p className="mt-0.5 text-base font-semibold text-white">{activeMetrics.length}</p>
@@ -144,31 +123,6 @@ export default function Home() {
           </motion.section>
 
           <Controls onUpdate={refresh} viewMode={viewMode} onViewModeChange={setViewMode} className="lg:h-full" />
-
-          <motion.section
-            initial={{ opacity: 0, y: 28 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.08, ease: "easeOut" }}
-            className="rounded-[28px] border border-white/70 bg-white/85 p-1.5 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm"
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] ${statusTone.className}`}>
-                {statusTone.label}
-              </span>
-              {latest && (
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">
-                  Tick {latest.tick}
-                </span>
-              )}
-            </div>
-            <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-              {error ?? (
-                viewMode === "aggregate"
-                  ? `Showing averaged metrics across ${runCount ?? 0} run(s). Switch to Current to view the live simulation.`
-                  : "Polling every 3 seconds with adaptive card sizing for large displays."
-              )}
-            </p>
-          </motion.section>
 
           <motion.section
             initial={{ opacity: 0, y: 28 }}
@@ -213,27 +167,26 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="mt-1.5 grid flex-1 min-h-0 min-w-0 grid-cols-1 auto-rows-fr gap-1.5 lg:grid-cols-2">
-            <ChartCard title={chartTitle("Wealth Distribution (latest tick)")} delay={0.3} className="col-span-1" bodyClassName="h-full">
-              <DistributionChart latest={latest} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Wealth Inequality (Gini)")} delay={0.1} className="col-span-1" bodyClassName="h-full">
-              <GiniChart data={activeMetrics} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Total Wealth")} delay={0.15} className="col-span-1" bodyClassName="h-full">
-              <WealthChart data={activeMetrics} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Power Metrics")} delay={0.2} className="col-span-1" bodyClassName="h-full">
-              <PowerChart data={activeMetrics} />
-            </ChartCard>
-
-            <ChartCard title={chartTitle("Network Metrics")} delay={0.25} className="col-span-1" bodyClassName="h-full">
-              <NetworkChart data={activeMetrics} />
-            </ChartCard>
+          <div className="mt-1.5 flex rounded-[28px] border border-white/60 bg-white/85 p-0.5 shadow-[0_24px_80px_rgba(16,42,51,0.10)] backdrop-blur-sm text-xs font-semibold w-fit">
+            <button
+              onClick={() => setMainView("simulation")}
+              className={`rounded-[22px] px-4 py-1.5 transition ${mainView === "simulation" ? "bg-slate-900 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Simulation
+            </button>
+            <button
+              onClick={() => setMainView("agents")}
+              className={`rounded-[22px] px-4 py-1.5 transition ${mainView === "agents" ? "bg-slate-900 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Agents
+            </button>
           </div>
+
+          {mainView === "simulation" ? (
+            <SimulationCharts metrics={activeMetrics} chartTitle={chartTitle} />
+          ) : (
+            <AgentInsights metrics={activeMetrics} />
+          )}
         </section>
       </div>
     </DashboardLayout>
