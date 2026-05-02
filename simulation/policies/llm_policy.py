@@ -123,6 +123,8 @@ class LLMPolicy(AgentPolicy):
         self._decision_cache: Dict[tuple, str] = {}
         # Diagnostics counters for dashboard-level fallback-rate reporting.
         self._llm_call_count: int = 0
+        self._llm_success_count: int = 0
+        self._llm_error_count: int = 0
         self._fallback_count: int = 0
         self._llm_total_latency_seconds: float = 0.0
         self._llm_latency_samples: int = 0
@@ -199,8 +201,11 @@ class LLMPolicy(AgentPolicy):
             raw_response = self._call_llm(prompt)
             self._record_latency(time.perf_counter() - started)
             action, used_fallback = self._parse_response_with_fallback(raw_response)
+            if not used_fallback:
+                self._llm_success_count += 1
         except Exception as exc:  # noqa: BLE001
             self._fallback_count += 1
+            self._llm_error_count += 1
             used_fallback = True
             logger.warning(
                 "LLMPolicy: decision failed for agent %s — falling back to '%s'. "
@@ -282,8 +287,11 @@ class LLMPolicy(AgentPolicy):
             raw_response = self._call_llm(prompt)
             self._record_latency(time.perf_counter() - started)
             action, used_fallback = self._parse_response_with_fallback(raw_response)
+            if not used_fallback:
+                self._llm_success_count += 1
         except Exception as exc:  # noqa: BLE001
             self._fallback_count += 1
+            self._llm_error_count += 1
             used_fallback = True
             logger.warning(
                 "LLMPolicy.generate_strategy: failed for agent %s — keeping '%s'. Error: %s",
@@ -342,8 +350,11 @@ class LLMPolicy(AgentPolicy):
             latency_seconds = time.perf_counter() - started
             self._record_latency(latency_seconds)
             action, used_fallback = self._parse_response_with_fallback(raw_response)
+            if not used_fallback:
+                self._llm_success_count += 1
         except asyncio.TimeoutError:
             self._fallback_count += 1
+            self._llm_error_count += 1
             used_fallback = True
             logger.warning(
                 "LLM FALLBACK agent_id=%s reason=timeout timeout=%ss",
@@ -352,6 +363,7 @@ class LLMPolicy(AgentPolicy):
             )
         except Exception as exc:  # noqa: BLE001
             self._fallback_count += 1
+            self._llm_error_count += 1
             used_fallback = True
             logger.warning(
                 "LLM FALLBACK agent_id=%s reason=error detail=%s",

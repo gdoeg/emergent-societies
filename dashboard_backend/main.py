@@ -184,6 +184,8 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
     n = len(env.agents)
     llm_call_count = 0
     llm_fallback_count = 0
+    llm_success_count = 0
+    llm_error_count = 0
     llm_total_latency_seconds = 0.0
     llm_latency_samples = 0
     seen_policy_ids = set()
@@ -194,6 +196,8 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
             seen_policy_ids.add(id(policy))
             llm_call_count += getattr(policy, "_llm_call_count", 0)
             llm_fallback_count += getattr(policy, "_fallback_count", 0)
+            llm_success_count += getattr(policy, "_llm_success_count", 0)
+            llm_error_count += getattr(policy, "_llm_error_count", 0)
             llm_total_latency_seconds += getattr(policy, "_llm_total_latency_seconds", 0.0)
             llm_latency_samples += getattr(policy, "_llm_latency_samples", 0)
 
@@ -226,6 +230,25 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         # Strategy breakdown for dashboard visualization
         "pct_cooperating": round(pct_cooperating, 2),
         "strategy_counts": {"cooperate": cooperating, "defect": defecting},
+        # Per-agent snapshot for interpretability view
+        "agents": [
+            {
+                "id": agent.id,
+                "wealth": agent.resources,
+                "power": compute_power(agent),
+                "strategy": agent.strategy,
+            }
+            for agent in env.agents
+        ],
+        # Structured LLM diagnostics
+        "llm_stats": {
+            "calls": llm_call_count,
+            "success": llm_success_count,
+            # Parse-only fallbacks = total fallbacks minus exception-based errors
+            "fallbacks": max(0, llm_fallback_count - llm_error_count),
+            "errors": llm_error_count,
+            "latency": round(avg_llm_latency * 1000, 2),
+        },
     }
 
 
