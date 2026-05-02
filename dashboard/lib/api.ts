@@ -2,6 +2,21 @@ import axios from "axios";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export interface AgentSnapshot {
+  id: number;
+  wealth: number;
+  power: number;
+  strategy: string;
+}
+
+export interface LlmStats {
+  calls: number;
+  success: number;
+  fallbacks: number;
+  errors: number;
+  latency: number;
+}
+
 export interface MetricEntry {
   tick: number;
   gini: number;
@@ -18,6 +33,8 @@ export interface MetricEntry {
   avg_llm_latency: number;
   pct_cooperating?: number;
   strategy_counts?: Record<string, number>;
+  agents?: AgentSnapshot[];
+  llm_stats?: LlmStats;
   /** Present only in aggregate entries – number of runs contributing to this step. */
   run_count?: number;
 }
