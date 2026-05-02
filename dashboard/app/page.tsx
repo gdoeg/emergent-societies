@@ -16,7 +16,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>("current");
   const [mainView, setMainView] = useState<"simulation" | "agents">("simulation");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -85,31 +85,13 @@ export default function Home() {
     },
   ];
 
-  const statusTone = error
-    ? {
-        label: "Backend disconnected",
-        className: "border-rose-200 bg-rose-50/90 text-rose-700",
-      }
-    : loading && !latest
-      ? {
-          label: "Fetching live metrics",
-          className: "border-amber-200 bg-amber-50/90 text-amber-700",
-        }
-      : {
-          label: viewMode === "aggregate" ? "Aggregate view" : "Streaming metrics",
-          className:
-            viewMode === "aggregate"
-              ? "border-teal-200 bg-teal-50/90 text-teal-700"
-              : "border-emerald-200 bg-emerald-50/90 text-emerald-700",
-        };
-
   const chartTitle = (base: string) =>
     viewMode === "aggregate" ? `${base} (avg across ${runCount ?? "?"} runs)` : base;
 
   return (
     <DashboardLayout>
-      <div className="grid w-full grid-cols-1 gap-2 p-2 lg:h-full lg:grid-cols-[214px_1fr] lg:p-2.5">
-        <aside className="grid min-w-0 gap-1.5 lg:min-h-0 lg:grid-rows-[auto_auto_auto_minmax(0,1fr)]">
+      <div className="grid w-full grid-cols-1 gap-2 p-2 lg:h-full lg:grid-cols-[232px_1fr] lg:p-2.5">
+        <aside className="grid min-w-0 gap-1.5 lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
           <motion.section
             initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
@@ -128,7 +110,7 @@ export default function Home() {
             <p className="mt-1 max-w-md text-[11px] leading-4 text-slate-200/86">
               An operational view of emergent dynamics in an active simulation.
             </p>
-            <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <div className="mt-2 grid grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-1.5">
               <div className="rounded-2xl border border-white/10 bg-white/6 px-2 py-1.5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300">Samples</p>
                 <p className="mt-0.5 text-base font-semibold text-white">{activeMetrics.length}</p>
@@ -141,31 +123,6 @@ export default function Home() {
           </motion.section>
 
           <Controls onUpdate={refresh} viewMode={viewMode} onViewModeChange={setViewMode} className="lg:h-full" />
-
-          <motion.section
-            initial={{ opacity: 0, y: 28 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.08, ease: "easeOut" }}
-            className="rounded-[28px] border border-white/70 bg-white/85 p-1.5 shadow-[0_24px_80px_rgba(16,42,51,0.12)] backdrop-blur-sm"
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] ${statusTone.className}`}>
-                {statusTone.label}
-              </span>
-              {latest && (
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">
-                  Tick {latest.tick}
-                </span>
-              )}
-            </div>
-            <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
-              {error ?? (
-                viewMode === "aggregate"
-                  ? `Showing averaged metrics across ${runCount ?? 0} run(s). Switch to Current to view the live simulation.`
-                  : "Polling every 3 seconds with adaptive card sizing for large displays."
-              )}
-            </p>
-          </motion.section>
 
           <motion.section
             initial={{ opacity: 0, y: 28 }}
