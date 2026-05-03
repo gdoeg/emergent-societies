@@ -386,15 +386,32 @@ def get_llm_provider(
         # Use provided model, or get first from configured models
         models = get_llm_models()
         groq_model = llm_model or models[0]
+        fallback_model = next(
+            (
+                model
+                for model in models
+                if model not in DEPRECATED_MODELS
+                and model not in LEGACY_MODEL_ALIASES
+            ),
+            None,
+        ) or next(
+            (
+                model
+                for model in DEFAULT_MODELS
+                if model not in DEPRECATED_MODELS
+                and model not in LEGACY_MODEL_ALIASES
+            ),
+            None,
+        )
         
         # Ensure we're not using a deprecated model
         if groq_model in DEPRECATED_MODELS or groq_model in LEGACY_MODEL_ALIASES:
             logger.warning(
                 "Requested model %s is deprecated/legacy, falling back to %s",
                 groq_model,
-                models[0],
+                fallback_model,
             )
-            groq_model = models[0]
+            groq_model = fallback_model
         
         return GroqProvider(
             api_key=api_key,
