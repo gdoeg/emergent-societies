@@ -38,10 +38,124 @@ _FALLBACK_ACTION = "defect"  # temporary for debugging
 # Maximum number of cached decisions kept in memory per policy instance.
 _MAX_CACHE_SIZE = 1024
 
-# Retry configuration - can be overridden via environment
-_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
-_RETRY_BACKOFF_BASE_RATE_LIMIT = float(os.getenv("LLM_RETRY_BACKOFF_RATE_LIMIT", "2.0"))
-_RETRY_BACKOFF_BASE_TIMEOUT = float(os.getenv("LLM_RETRY_BACKOFF_TIMEOUT", "1.5"))
+# Retry configuration defaults. These must not be read from the environment at
+# import time because entrypoints may call load_dotenv() after importing this
+# module. Keep the public names below, but resolve their values lazily.
+_DEFAULT_MAX_RETRIES = 3
+_DEFAULT_RETRY_BACKOFF_BASE_RATE_LIMIT = 2.0
+_DEFAULT_RETRY_BACKOFF_BASE_TIMEOUT = 1.5
+
+
+def _get_env_int(name: str, default: int) -> int:
+    """Read an integer environment variable at runtime with a safe fallback."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid integer for %s=%r; using default %s", name, value, default)
+        return default
+
+
+def _get_env_float(name: str, default: float) -> float:
+    """Read a float environment variable at runtime with a safe fallback."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid float for %s=%r; using default %s", name, value, default)
+        return default
+
+
+class _EnvBackedNumber:
+    """Numeric proxy that resolves from the environment each time it is used."""
+
+    def __init__(self, name: str, default: Any, parser):
+        self._name = name
+        self._default = default
+        self._parser = parser
+
+    def _value(self):
+        return self._parser(self._name, self._default)
+
+    def __repr__(self) -> str:
+        return repr(self._value())
+
+    def __str__(self) -> str:
+        return str(self._value())
+
+    def __int__(self) -> int:
+        return int(self._value())
+
+    def __float__(self) -> float:
+        return float(self._value())
+
+    def __index__(self) -> int:
+        return int(self._value())
+
+    def __bool__(self) -> bool:
+        return bool(self._value())
+
+    def __eq__(self, other) -> bool:
+        return self._value() == other
+
+    def __lt__(self, other) -> bool:
+        return self._value() < other
+
+    def __le__(self, other) -> bool:
+        return self._value() <= other
+
+    def __gt__(self, other) -> bool:
+        return self._value() > other
+
+    def __ge__(self, other) -> bool:
+        return self._value() >= other
+
+    def __add__(self, other):
+        return self._value() + other
+
+    def __radd__(self, other):
+        return other + self._value()
+
+    def __sub__(self, other):
+        return self._value() - other
+
+    def __rsub__(self, other):
+        return other - self._value()
+
+    def __mul__(self, other):
+        return self._value() * other
+
+    def __rmul__(self, other):
+        return other * self._value()
+
+    def __truediv__(self, other):
+        return self._value() / other
+
+    def __rtruediv__(self, other):
+        return other / self._value()
+
+    def __pow__(self, other):
+        return self._value() ** other
+
+    def __rpow__(self, other):
+        return other ** self._value()
+
+
+_MAX_RETRIES = _EnvBackedNumber("LLM_MAX_RETRIES", _DEFAULT_MAX_RETRIES, _get_env_int)
+_RETRY_BACKOFF_BASE_RATE_LIMIT = _EnvBackedNumber(
+    "LLM_RETRY_BACKOFF_RATE_LIMIT",
+    _DEFAULT_RETRY_BACKOFF_BASE_RATE_LIMIT,
+    _get_env_float,
+)
+_RETRY_BACKOFF_BASE_TIMEOUT = _EnvBackedNumber(
+    "LLM_RETRY_BACKOFF_TIMEOUT",
+    _DEFAULT_RETRY_BACKOFF_BASE_TIMEOUT,
+    _get_env_float,
+)
 
 
 def batch_agents(agents: List[Any], batch_size: int) -> List[List[Any]]:
