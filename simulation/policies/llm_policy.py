@@ -579,7 +579,8 @@ class LLMPolicy(AgentPolicy):
     async def generate_strategies_batch_async(self, agent_batch: List[Any]) -> Dict[Any, str]:
         """Generate strategies for a batch of agents with one LLM call.
 
-        Falls back to per-agent async calls if the batch request fails.
+        Falls back to per-agent async calls for any agents absent from the
+        batch response, or for all agents if the batch call itself fails.
         """
         if not agent_batch:
             return {}
@@ -589,6 +590,10 @@ class LLMPolicy(AgentPolicy):
 
         prompt = self._build_batch_strategy_prompt(agent_batch)
         started = time.perf_counter()
+        # Initialized empty; populated on a successful batch LLM call.
+        # Any agent absent from this mapping after the try block is routed
+        # through the per-agent fallback path below.
+        mapping: Dict[Any, str] = {}
         try:
             self._llm_call_count += 1
             raw_response = await self._call_llm_async(
@@ -599,15 +604,10 @@ class LLMPolicy(AgentPolicy):
             latency_seconds = time.perf_counter() - started
             self._record_latency(latency_seconds)
             mapping = self._parse_batch_response(raw_response, agent_batch)
-
-            missing_agent_ids = [a.agent_id for a in agent_batch if a.agent_id not in mapping]
-            if missing_agent_ids:
-                raise ValueError(f"Batch response missing agent ids: {missing_agent_ids}")
-
-            # Count every agent in the batch as one decision attempt. Per-agent
-            # parse fallbacks were already recorded inside _parse_batch_response.
-            self._total_agent_decisions += len(agent_batch)
-            return mapping
+            # _parse_batch_response already recorded per-agent success/fallback
+            # counters for each present agent. Count only those parsed agents here;
+            # agents missing from the response are handled below.
+            self._total_agent_decisions += len(mapping)
         except Exception as exc:  # noqa: BLE001
             self._log_fallback(
                 self._build_provider_error_reason(
@@ -615,32 +615,36 @@ class LLMPolicy(AgentPolicy):
                     exc,
                 )
             )
-            fallback_results: Dict[Any, str] = {}
 
+        # Fall back individually for any agent absent from the batch response
+        # (either because the whole batch failed or the response was incomplete).
+        # generate_strategy_async handles its own counter increments so there is
+        # no double-counting with the _total_agent_decisions increment above.
+        present_ids = set(mapping.keys())
+        missing_agents = [a for a in agent_batch if a.agent_id not in present_ids]
+        if missing_agents:
             async def _fallback(agent) -> Tuple[Any, str]:
                 action = await self.generate_strategy_async(agent)
                 return agent.agent_id, action
 
-            results = await asyncio.gather(*[_fallback(agent) for agent in agent_batch], return_exceptions=True)
+            results = await asyncio.gather(*[_fallback(agent) for agent in missing_agents], return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
                     continue
                 agent_id, action = result
-                fallback_results[agent_id] = action
+                mapping[agent_id] = action
 
-            for agent in agent_batch:
-                if agent.agent_id not in fallback_results:
-                    # Safety net for the rare case where generate_strategy_async
-                    # raised unexpectedly (it normally always returns). These agents
-                    # were not counted by generate_strategy_async, so we account for
-                    # them here. Note: _total_agent_decisions += len(agent_batch) in
-                    # the success path above never runs when we reach this except
-                    # block, so there is no risk of double-counting.
+            # Safety net for the rare case where generate_strategy_async itself
+            # raised unexpectedly. Those agents were not counted by
+            # generate_strategy_async, so account for them here.
+            for agent in missing_agents:
+                if agent.agent_id not in mapping:
                     self._total_agent_decisions += 1
                     self._fallback_count += 1
                     self._fallback_agent_decisions += 1
-                    fallback_results[agent.agent_id] = _FALLBACK_ACTION
-            return fallback_results
+                    mapping[agent.agent_id] = _FALLBACK_ACTION
+
+        return mapping
 
     def generate_strategies_batch(self, agent_batch: List[Any]) -> Dict[Any, str]:
         """Sync wrapper for batch strategy generation for non-async callers."""
@@ -1028,15 +1032,9 @@ class LLMPolicy(AgentPolicy):
         last_error = None
         
         for model_idx, model in enumerate(models_to_try):
-            # Create provider instance for this model
-            if model == self.provider.model:
-                provider = self.provider
-            else:
-                # Switch to alternate model - for now retry with same provider
-                # In a real scenario, you might create new provider instances
-                # but for simplicity we'll use the current one
-                logger.debug("Attempting fallback to model %s", model)
-                provider = self.provider
+            # Each model in the fallback list gets its own provider instance so
+            # that provider.generate() actually targets the intended model.
+            provider = self.provider.with_model(model)
             
             for attempt in range(_MAX_RETRIES):
                 try:

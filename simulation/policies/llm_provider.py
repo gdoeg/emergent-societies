@@ -213,6 +213,15 @@ class BaseLLMProvider:
             pass
         return self.get_health()
 
+    def with_model(self, model: str) -> "BaseLLMProvider":
+        """Return a new provider instance of the same type configured to use *model*.
+
+        All connection credentials and timeout settings are preserved from the
+        original instance. Each call creates an independent provider with its
+        own HTTP client; connection pools are not shared.
+        """
+        raise NotImplementedError
+
     async def generate(self, prompt: str, expect_json: bool = False) -> str:
         raise NotImplementedError
 
@@ -237,6 +246,9 @@ class OllamaProvider(BaseLLMProvider):
         if self.base_url.endswith("/v1"):
             return f"{self.base_url}/chat/completions"
         return f"{self.base_url}/v1/chat/completions"
+
+    def with_model(self, model: str) -> "OllamaProvider":
+        return OllamaProvider(base_url=self.base_url, model=model, timeout=self.timeout)
 
     async def generate(self, prompt: str, expect_json: bool = False) -> str:
         payload = {
@@ -305,6 +317,9 @@ class GroqProvider(BaseLLMProvider):
         
         # Call parent for standard error detection
         return super()._classify_http_error(response, error_payload)
+
+    def with_model(self, model: str) -> "GroqProvider":
+        return GroqProvider(api_key=self.api_key, model=model, timeout=self.timeout)
 
     async def generate(self, prompt: str, expect_json: bool = False) -> str:
         headers = {
