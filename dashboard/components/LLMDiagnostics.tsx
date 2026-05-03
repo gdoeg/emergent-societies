@@ -48,9 +48,16 @@ export default function LLMDiagnostics({ metrics }: LLMDiagnosticsProps) {
   const latency = stats?.latency ?? 0;
 
   const successPct = totalDecisions > 0 ? (success / totalDecisions) * 100 : 0;
-  const fallbackPct = totalDecisions > 0 ? (fallbacks / totalDecisions) * 100 : 0;
+  // Prefer the pre-computed fallback_rate (covers both parse failures and provider errors).
+  // Fall back to computing from stats.fallbacks only when fallback_rate is unavailable.
+  const fallbackPct =
+    stats?.fallback_rate != null
+      ? stats.fallback_rate * 100
+      : totalDecisions > 0
+        ? (fallbacks / totalDecisions) * 100
+        : 0;
   const errorPct = totalDecisions > 0 ? (errors / totalDecisions) * 100 : 0;
-  const highFallbackRate = totalDecisions > 0 && (fallbacks + errors) / totalDecisions > 0.5;
+  const highFallbackRate = fallbackPct > 50;
   const healthClasses =
     healthSummary.tone === "healthy"
       ? "border-emerald-300 bg-emerald-50 text-emerald-800"

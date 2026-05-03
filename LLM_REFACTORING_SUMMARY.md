@@ -76,21 +76,21 @@ New error classes for precise handling:
 
 ---
 
-### 5. **Decision Interval Optimization** ✅
+### 5. **Decision Interval Configuration** ✅
 **File:** `simulation/config.py`
 
-- Increased default from `15` to `25` steps
-- Environment variable override:
+- Default remains `15` steps
+- Override with environment variable to reduce LLM call frequency:
 
 ```python
-DECISION_INTERVAL=25  # Agents reuse strategy every N steps
+DECISION_INTERVAL=25  # Agents reuse strategy every N steps (default: 15)
 ```
 
-**Impact:** Reduces LLM calls by ~65% while maintaining decision quality.
+**Impact:** Increasing this value reduces LLM calls proportionally while reusing the last decision between updates.
 
-Example: 100 agents × 1000 steps
-- Before: ~6,666 LLM calls (1 per interaction + periodic updates)
-- After: ~2,500 LLM calls (one update per agent per 25 steps + throttling)
+Example: 100 agents × 1000 steps with `DECISION_INTERVAL=25`
+- Before (interval=15): ~6,666 LLM calls
+- After (interval=25): ~4,000 LLM calls (~40% reduction)
 
 ---
 

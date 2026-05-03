@@ -81,7 +81,12 @@ export default function Home() {
     },
     {
       label: "Fallbacks",
-      value: latest ? `${latest.llm_fallback_count}/${latest.llm_call_count}` : "—",
+      value: (() => {
+        if (!latest) return "—";
+        const numerator = latest.fallback_agent_decisions ?? latest.llm_fallback_count;
+        const denominator = latest.total_agent_decisions ?? latest.llm_call_count;
+        return `${numerator}/${denominator}`;
+      })(),
     },
   ];
 

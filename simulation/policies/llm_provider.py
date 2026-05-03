@@ -260,7 +260,7 @@ class OllamaProvider(BaseLLMProvider):
             data = response.json()
             self._record_success()
             return data["choices"][0]["message"]["content"]
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             self._record_transport_error(TimeoutError("Request timed out", self.model))
             raise TimeoutError(f"Ollama request timed out after {self.timeout}s", self.model)
         except httpx.HTTPStatusError as exc:
@@ -333,7 +333,7 @@ class GroqProvider(BaseLLMProvider):
             data = response.json()
             self._record_success()
             return data["choices"][0]["message"]["content"]
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             self._record_transport_error(TimeoutError("Request timed out", self.model))
             raise TimeoutError(f"Groq request timed out after {self.timeout}s", self.model)
         except httpx.HTTPStatusError as exc:
