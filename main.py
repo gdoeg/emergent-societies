@@ -39,9 +39,11 @@ def _make_policy(config: SimulationConfig):
             llm_timeout=config.llm_timeout,
         )
         logger.info(
-            "Using LLMPolicy: model=%s api_base_url=%s",
+            "Using LLMPolicy: model=%s api_base_url=%s models=%s max_retries=%s",
             config.llm_model,
             config.llm_api_base_url,
+            config.llm_models,
+            config.llm_max_retries,
         )
         return LLMPolicy(
             provider=provider,
@@ -53,6 +55,7 @@ def _make_policy(config: SimulationConfig):
             batch_size=config.llm_batch_size,
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
+            llm_models=config.llm_models.split(",") if config.llm_models else None,
         )
     logger.info("Using DeterministicPolicy")
     return DeterministicPolicy()
@@ -81,6 +84,7 @@ def _make_agents(config: SimulationConfig):
             batch_size=config.llm_batch_size,
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
+            llm_models=config.llm_models.split(",") if config.llm_models else None,
         )
 
         def agent_policy():

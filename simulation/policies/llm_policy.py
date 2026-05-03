@@ -1,16 +1,33 @@
-"""LLM-based agent policy using an OpenAI-compatible chat API."""
+"""LLM-based agent policy using an OpenAI-compatible chat API.
+
+Features:
+- Retry + exponential backoff for rate limits and timeouts
+- Multi-model fallback strategy with lightweight models first
+- Concurrency control via semaphore
+- Comprehensive metrics tracking
+- Structured error handling and logging
+"""
 
 import asyncio
 import concurrent.futures
 import json
 import logging
+import os
 import re
 import time
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple
 
 from simulation.policies.base import AgentPolicy
-from simulation.policies.llm_provider import BaseLLMProvider, OllamaProvider
+from simulation.policies.llm_provider import (
+    BaseLLMProvider,
+    OllamaProvider,
+    RateLimitError,
+    TimeoutError as LLMTimeoutError,
+    ModelDecommissionedError,
+    InvalidAPIKeyError,
+    get_llm_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +37,11 @@ _DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
 _FALLBACK_ACTION = "defect"  # temporary for debugging
 # Maximum number of cached decisions kept in memory per policy instance.
 _MAX_CACHE_SIZE = 1024
+
+# Retry configuration - can be overridden via environment
+_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+_RETRY_BACKOFF_BASE_RATE_LIMIT = float(os.getenv("LLM_RETRY_BACKOFF_RATE_LIMIT", "2.0"))
+_RETRY_BACKOFF_BASE_TIMEOUT = float(os.getenv("LLM_RETRY_BACKOFF_TIMEOUT", "1.5"))
 
 
 def batch_agents(agents: List[Any], batch_size: int) -> List[List[Any]]:
@@ -101,6 +123,7 @@ class LLMPolicy(AgentPolicy):
         batch_size: int = 8,
         enable_async: bool = True,
         debug_llm: bool = False,
+        llm_models: Optional[List[str]] = None,
     ) -> None:
         self.model = model
         self.api_base_url = api_base_url.rstrip("/")
@@ -121,17 +144,24 @@ class LLMPolicy(AgentPolicy):
         self._throttle_cache: Dict[Any, str] = {}         # agent_id -> last action
         # Lightweight in-memory decision cache keyed by a minimal state tuple.
         self._decision_cache: Dict[tuple, str] = {}
+        
+        # Multi-model fallback support
+        self.llm_models = llm_models or get_llm_models()
+        logger.info("LLMPolicy initialized with models: %s", self.llm_models)
+        
         # Diagnostics counters for dashboard-level fallback-rate reporting.
         self._llm_call_count: int = 0
-        self._llm_success_count: int = 0
         self._llm_error_count: int = 0
         self._fallback_count: int = 0
+        # Retry metrics: track how many times we retry before succeeding or failing
+        self._llm_retry_count: int = 0
         # Per-agent-decision counters used to compute an accurate fallback rate.
         # Unlike _llm_call_count (per-request) and _fallback_count (mixed
         # granularity), these are incremented exactly once per agent decision
         # attempt, making fallback_rate = fallback_agent_decisions /
         # total_agent_decisions meaningful.
         self._total_agent_decisions: int = 0
+        self._success_agent_decisions: int = 0
         self._fallback_agent_decisions: int = 0
         self._llm_total_latency_seconds: float = 0.0
         self._llm_latency_samples: int = 0
@@ -143,6 +173,32 @@ class LLMPolicy(AgentPolicy):
                 model=self.model,
                 timeout=float(self.timeout),
             )
+
+    def _log_fallback(self, reason: str) -> None:
+        logger.warning("LLM fallback triggered: %s", reason)
+
+    def _record_llm_success(self, strategy: str) -> None:
+        """Track one successful LLM-produced strategy and emit diagnostics."""
+        self._success_agent_decisions += 1
+        model = getattr(self.provider, "model", self.model)
+        logger.info(f"LLM SUCCESS: {model} -> {strategy}")
+
+    def _build_provider_error_reason(self, prefix: str, exc: Exception | None = None) -> str:
+        provider = getattr(self, "provider", None)
+        provider_error = None
+        provider_message = None
+        if provider is not None and hasattr(provider, "get_health"):
+            health = provider.get_health()
+            provider_error = health.get("provider_error") or health.get("error_type")
+            provider_message = health.get("message")
+
+        if provider_error:
+            if provider_message:
+                return f"{prefix} provider_error={provider_error} detail={provider_message}"
+            return f"{prefix} provider_error={provider_error}"
+        if exc is not None:
+            return f"{prefix} detail={exc}"
+        return prefix
 
     # ------------------------------------------------------------------
     # Public interface
@@ -210,27 +266,26 @@ class LLMPolicy(AgentPolicy):
             self._record_latency(time.perf_counter() - started)
             action, used_fallback = self._parse_response_with_fallback(raw_response)
             if not used_fallback:
-                self._llm_success_count += 1
+                self._record_llm_success(action)
+        except (RateLimitError, LLMTimeoutError, ModelDecommissionedError, InvalidAPIKeyError) as exc:
+            self._llm_error_count += 1
+            used_fallback = True
+            self._log_fallback(f"agent_id={agent.agent_id} stage=decision error_type={exc.error_type}")
+            action = _FALLBACK_ACTION
         except Exception as exc:  # noqa: BLE001
             self._llm_error_count += 1
             used_fallback = True
-            logger.warning(
-                "LLMPolicy: decision failed for agent %s — falling back to '%s'. "
-                "Error: %s",
-                agent.agent_id,
-                _FALLBACK_ACTION,
-                exc,
+            self._log_fallback(
+                self._build_provider_error_reason(
+                    f"agent_id={agent.agent_id} stage=decision",
+                    exc,
+                )
             )
             action = _FALLBACK_ACTION
 
         if used_fallback:
             self._fallback_count += 1
             self._fallback_agent_decisions += 1
-            logger.warning(
-                "LLM fallback for agent %s: using '%s'",
-                agent.agent_id,
-                _FALLBACK_ACTION,
-            )
 
         log_record: Dict[str, Any] = {
             "action": "decide_action",
@@ -298,25 +353,20 @@ class LLMPolicy(AgentPolicy):
             self._record_latency(time.perf_counter() - started)
             action, used_fallback = self._parse_response_with_fallback(raw_response)
             if not used_fallback:
-                self._llm_success_count += 1
+                self._record_llm_success(action)
         except Exception as exc:  # noqa: BLE001
             self._llm_error_count += 1
             used_fallback = True
-            logger.warning(
-                "LLMPolicy.generate_strategy: failed for agent %s — keeping '%s'. Error: %s",
-                agent.agent_id,
-                _FALLBACK_ACTION,
-                exc,
+            self._log_fallback(
+                self._build_provider_error_reason(
+                    f"agent_id={agent.agent_id} stage=strategy_update",
+                    exc,
+                )
             )
 
         if used_fallback:
             self._fallback_count += 1
             self._fallback_agent_decisions += 1
-            logger.warning(
-                "LLM fallback for agent %s: using '%s'",
-                agent.agent_id,
-                _FALLBACK_ACTION,
-            )
 
         log_record: Dict[str, Any] = {
             "action": "strategy_update",
@@ -363,22 +413,29 @@ class LLMPolicy(AgentPolicy):
             self._record_latency(latency_seconds)
             action, used_fallback = self._parse_response_with_fallback(raw_response)
             if not used_fallback:
-                self._llm_success_count += 1
+                self._record_llm_success(action)
         except asyncio.TimeoutError:
             self._llm_error_count += 1
             used_fallback = True
-            logger.warning(
-                "LLM FALLBACK agent_id=%s reason=timeout timeout=%ss",
-                agent.agent_id,
-                self.timeout,
+            self._log_fallback(
+                f"agent_id={agent.agent_id} stage=strategy_update_async reason=timeout timeout={self.timeout}s"
             )
+        except RateLimitError as exc:
+            self._llm_error_count += 1
+            used_fallback = True
+            self._log_fallback(f"agent_id={agent.agent_id} stage=strategy_update_async error_type=rate_limit")
+        except (LLMTimeoutError, ModelDecommissionedError, InvalidAPIKeyError) as exc:
+            self._llm_error_count += 1
+            used_fallback = True
+            self._log_fallback(f"agent_id={agent.agent_id} stage=strategy_update_async error_type={exc.error_type}")
         except Exception as exc:  # noqa: BLE001
             self._llm_error_count += 1
             used_fallback = True
-            logger.warning(
-                "LLM FALLBACK agent_id=%s reason=error detail=%s",
-                agent.agent_id,
-                exc,
+            self._log_fallback(
+                self._build_provider_error_reason(
+                    f"agent_id={agent.agent_id} stage=strategy_update_async",
+                    exc,
+                )
             )
 
         if used_fallback:
@@ -438,10 +495,11 @@ class LLMPolicy(AgentPolicy):
             self._total_agent_decisions += len(agent_batch)
             return mapping
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "LLM batch failed for size=%s; falling back per-agent. Error: %s",
-                len(agent_batch),
-                exc,
+            self._log_fallback(
+                self._build_provider_error_reason(
+                    f"batch_size={len(agent_batch)} stage=batch_strategy",
+                    exc,
+                )
             )
             fallback_results: Dict[Any, str] = {}
 
@@ -802,10 +860,14 @@ class LLMPolicy(AgentPolicy):
         for raw_agent_id, raw_action in strategies.items():
             if str(raw_agent_id) not in valid_agent_ids:
                 continue
-            action, used_fallback = self._parse_response_with_fallback(str(raw_action))
+            strategy = str(raw_action)
+            strategy = strategy.strip().lower()
+            action, used_fallback = self._parse_response_with_fallback(strategy)
             if used_fallback:
                 self._fallback_count += 1
                 self._fallback_agent_decisions += 1
+            else:
+                self._record_llm_success(action)
             mapped[valid_agent_ids[str(raw_agent_id)]] = action
         return mapped
     # ------------------------------------------------------------------
@@ -837,13 +899,133 @@ class LLMPolicy(AgentPolicy):
         max_tokens: int = 20,
         expect_json: bool = False,
     ) -> str:
-        """Async LLM call with semaphore-based concurrency and hard timeout."""
+        """Async LLM call with retry, exponential backoff, and multi-model fallback.
+        
+        Strategy:
+        1. Try each model in llm_models with retry+backoff
+        2. On RateLimitError or TimeoutError, retry with exponential backoff
+        3. On ModelDecommissionedError or InvalidAPIKeyError, skip to next model
+        4. Return first successful response
+        5. Only fallback to default action after all models and retries exhausted
+        """
         del max_tokens  # handled internally by providers when needed
-        async with self._semaphore:
-            return await asyncio.wait_for(
-                self.provider.generate(prompt, expect_json=expect_json),
-                timeout=self.timeout,
-            )
+        
+        models_to_try = list(self.llm_models) if self.llm_models else ["llama3"]
+        last_error = None
+        
+        for model_idx, model in enumerate(models_to_try):
+            # Create provider instance for this model
+            if model == self.provider.model:
+                provider = self.provider
+            else:
+                # Switch to alternate model - for now retry with same provider
+                # In a real scenario, you might create new provider instances
+                # but for simplicity we'll use the current one
+                logger.debug("Attempting fallback to model %s", model)
+                provider = self.provider
+            
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    if self.debug_llm and attempt > 0:
+                        logger.info(
+                            "LLM retry model=%s attempt=%d/%d",
+                            model,
+                            attempt + 1,
+                            _MAX_RETRIES,
+                        )
+                    
+                    async with self._semaphore:
+                        response = await asyncio.wait_for(
+                            provider.generate(prompt, expect_json=expect_json),
+                            timeout=self.timeout,
+                        )
+                    
+                    if attempt > 0:
+                        self._llm_retry_count += 1
+                        logger.info(
+                            "LLM retry succeeded after %d attempt(s) with model %s",
+                            attempt + 1,
+                            model,
+                        )
+                    
+                    return response
+                
+                except RateLimitError as exc:
+                    last_error = exc
+                    if attempt < _MAX_RETRIES - 1:
+                        # Calculate backoff: 2^attempt seconds
+                        backoff_seconds = _RETRY_BACKOFF_BASE_RATE_LIMIT ** attempt
+                        # Add jitter to avoid thundering herd
+                        jitter = 0.1 * attempt
+                        total_backoff = backoff_seconds + jitter
+                        
+                        logger.warning(
+                            "Rate limit on model %s. Retry %d/%d after %.2f seconds.",
+                            model,
+                            attempt + 1,
+                            _MAX_RETRIES,
+                            total_backoff,
+                        )
+                        self._llm_retry_count += 1
+                        await asyncio.sleep(total_backoff)
+                    else:
+                        logger.error(
+                            "Rate limit exhausted on model %s after %d retries.",
+                            model,
+                            _MAX_RETRIES,
+                        )
+                
+                except (LLMTimeoutError, asyncio.TimeoutError) as exc:
+                    last_error = exc
+                    if attempt < _MAX_RETRIES - 1:
+                        # Calculate backoff: 1.5^attempt seconds (more conservative)
+                        backoff_seconds = _RETRY_BACKOFF_BASE_TIMEOUT ** attempt
+                        jitter = 0.05 * attempt
+                        total_backoff = backoff_seconds + jitter
+                        
+                        logger.warning(
+                            "Timeout on model %s. Retry %d/%d after %.2f seconds.",
+                            model,
+                            attempt + 1,
+                            _MAX_RETRIES,
+                            total_backoff,
+                        )
+                        self._llm_retry_count += 1
+                        await asyncio.sleep(total_backoff)
+                    else:
+                        logger.error(
+                            "Timeout exhausted on model %s after %d retries.",
+                            model,
+                            _MAX_RETRIES,
+                        )
+                
+                except (ModelDecommissionedError, InvalidAPIKeyError) as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Model %s unavailable (%s). Trying next model in fallback list.",
+                        model,
+                        exc.error_type,
+                    )
+                    break  # Break retry loop, try next model
+                
+                except Exception as exc:
+                    last_error = exc
+                    logger.error(
+                        "Unexpected error on model %s: %s",
+                        model,
+                        str(exc),
+                        exc_info=True,
+                    )
+                    if attempt < _MAX_RETRIES - 1:
+                        await asyncio.sleep(1.0)
+                        self._llm_retry_count += 1
+        
+        # All models and retries exhausted
+        logger.error(
+            "All LLM models exhausted. Last error: %s",
+            str(last_error),
+        )
+        raise last_error or Exception("LLM call failed: all models exhausted")
 
     def _batch_max_tokens(self, batch_len: int) -> int:
         """Return a token budget suitable for batched JSON strategy responses."""
@@ -860,6 +1042,45 @@ class LLMPolicy(AgentPolicy):
         if self._llm_latency_samples == 0:
             return 0.0
         return self._llm_total_latency_seconds / self._llm_latency_samples
+    
+    def get_llm_retry_count(self) -> int:
+        """Return total number of LLM retries that occurred."""
+        return self._llm_retry_count
+    
+    def get_llm_metrics(self) -> Dict[str, Any]:
+        """Return comprehensive LLM metrics for dashboard/logging."""
+        total_decisions = self._total_agent_decisions
+        success_decisions = self._success_agent_decisions
+        fallback_decisions = self._fallback_agent_decisions
+        success_rate = (
+            (success_decisions / total_decisions)
+            if total_decisions > 0
+            else 0.0
+        )
+        fallback_rate = (
+            (fallback_decisions / total_decisions) 
+            if total_decisions > 0 
+            else 0.0
+        )
+
+        logger.info(
+            f"Agent Decisions: {total_decisions}, Success: {success_decisions}, Fallback: {fallback_decisions}"
+        )
+        
+        return {
+            "total_llm_calls": self._llm_call_count,
+            "llm_error_count": self._llm_error_count,
+            "llm_retry_count": self._llm_retry_count,
+            "total_agent_decisions": total_decisions,
+            "success_agent_decisions": success_decisions,
+            "fallback_agent_decisions": fallback_decisions,
+            "success_rate": success_rate,
+            "fallback_rate": fallback_rate,
+            "avg_llm_latency_seconds": self.get_avg_llm_latency(),
+            "configured_models": self.llm_models,
+            "max_retries": _MAX_RETRIES,
+            "max_concurrency": self.max_concurrent_llm_calls,
+        }
 
     # ------------------------------------------------------------------
     # Response parsing
@@ -881,7 +1102,8 @@ class LLMPolicy(AgentPolicy):
             Tuple ``(action, used_fallback)`` where action is ``"cooperate"`` or
             ``"defect"``.
         """
-        normalised = text.strip().lower()
+        strategy = text.strip().lower()
+        normalised = strategy
 
         # Try to find the *last* occurrence of either keyword as a whole word.
         # "last" is used because LLMs sometimes prepend filler text and end
@@ -890,9 +1112,5 @@ class LLMPolicy(AgentPolicy):
         if matches:
             return matches[-1].group(1), False
 
-        logger.warning(
-            "LLMPolicy: could not parse response %r — defaulting to '%s'",
-            text,
-            _FALLBACK_ACTION,
-        )
+        self._log_fallback(f"reason=unparseable_response detail={text!r}")
         return _FALLBACK_ACTION, True

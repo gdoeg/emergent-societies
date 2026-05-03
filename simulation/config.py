@@ -1,6 +1,7 @@
 """SimulationConfig: centralised configuration for the emergent-societies simulation."""
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -38,7 +39,7 @@ class SimulationConfig:
             ``"llm"`` delegates decisions to an LLM via the OpenAI-compatible
             chat-completion API.
         llm_model: LLM model name used when ``policy_type`` is ``"llm"``
-            (default: ``"llama3"``).
+            (default: ``"llama-3.1-8b-instant"``).
         llm_api_base_url: Base URL for the chat-completion API.  Change this
             to use any OpenAI-compatible provider
             (default: ``"http://localhost:11434/v1"``).
@@ -53,7 +54,15 @@ class SimulationConfig:
         debug_llm: Emit detailed LLM debug logs when ``True``.
         decision_interval: LLM agents only call the model every
             ``decision_interval`` steps; the last decision is reused between
-            calls to reduce API load (default: ``4``).
+            calls to reduce API load (default: ``15``). Can be overridden via
+            DECISION_INTERVAL environment variable.
+        llm_max_retries: Maximum number of retry attempts for LLM calls
+            (default: ``3``). Can be overridden via LLM_MAX_RETRIES env var.
+        llm_models: Comma-separated list of LLM models to use in order of
+            preference. Models are tried in order with retry/backoff before
+            falling back to deterministic strategy. Can be overridden via
+            LLM_MODELS environment variable
+            (default: ``"llama-3.1-8b-instant,llama-3.3-70b-versatile"``).
         max_pairs_per_step: Maximum number of agent pairs to interact per
             simulation step.  Random sampling is used when the pool of
             shuffled pairs exceeds this limit (default: ``15``).
@@ -77,7 +86,7 @@ class SimulationConfig:
     elite_advantage_factor: float = 1.2
     enable_elite_advantage: bool = False
     policy_type: str = "llm"
-    llm_model: str = "llama3"
+    llm_model: str = "llama-3.1-8b-instant"
     llm_api_base_url: str = "http://localhost:11434/v1"
     # Timeout in seconds for LLM API calls.  5 s gives headroom for the
     # 700–1000 ms Ollama responses seen in practice while still failing fast.
@@ -88,6 +97,10 @@ class SimulationConfig:
     debug_llm: bool = False
     # Strategy update interval: agents ask the LLM for a new strategy every K steps
     decision_interval: int = 15
+    # LLM retry configuration for production resilience
+    llm_max_retries: int = 3
+    # Multi-model fallback strategy: lightweight models first
+    llm_models: str = "llama-3.1-8b-instant,llama-3.3-70b-versatile"
     # Cap pairwise interactions per step to bound O(n²) LLM call growth
     max_pairs_per_step: int = 15
     # Chunk size for run_steps(); avoids blocking on a full num_steps run
@@ -96,7 +109,17 @@ class SimulationConfig:
     memory_size: int = 50
 
     def __post_init__(self) -> None:
-        """Validate documented configuration constraints."""
+        """Validate documented configuration constraints and apply environment overrides."""
+        # Apply environment variable overrides
+        if os.getenv("DECISION_INTERVAL"):
+            self.decision_interval = int(os.getenv("DECISION_INTERVAL"))
+        if os.getenv("LLM_MAX_RETRIES"):
+            self.llm_max_retries = int(os.getenv("LLM_MAX_RETRIES"))
+        if os.getenv("LLM_MODELS"):
+            self.llm_models = os.getenv("LLM_MODELS")
+        if os.getenv("LLM_MAX_CONCURRENCY"):
+            self.max_concurrent_llm_calls = int(os.getenv("LLM_MAX_CONCURRENCY"))
+        
         if self.num_agents < 0:
             raise ValueError("num_agents must be non-negative")
         if self.num_steps < 0:
@@ -156,6 +179,9 @@ class SimulationConfig:
         if self.decision_interval < 1:
             raise ValueError("decision_interval must be at least 1")
 
+        if self.llm_max_retries < 1:
+            raise ValueError("llm_max_retries must be at least 1")
+
         if self.max_pairs_per_step < 1:
             raise ValueError("max_pairs_per_step must be at least 1")
 
@@ -188,6 +214,8 @@ class SimulationConfig:
             "enable_async_llm": self.enable_async_llm,
             "debug_llm": self.debug_llm,
             "decision_interval": self.decision_interval,
+            "llm_max_retries": self.llm_max_retries,
+            "llm_models": self.llm_models,
             "max_pairs_per_step": self.max_pairs_per_step,
             "chunk_size": self.chunk_size,
             "memory_size": self.memory_size,

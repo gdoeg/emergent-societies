@@ -11,10 +11,26 @@ export interface AgentSnapshot {
 
 export interface LlmStats {
   calls: number;
+  total_agent_decisions?: number;
   success: number;
   fallbacks: number;
   errors: number;
+  success_rate?: number;
+  fallback_rate?: number;
   latency: number;
+}
+
+export interface LlmProviderHealth {
+  provider: string;
+  model: string;
+  healthy: boolean | null;
+  status: string;
+  provider_status?: "ok" | "error" | null;
+  status_code: number | null;
+  error_type: string | null;
+  error_code: string | null;
+  provider_error?: string | null;
+  message: string | null;
 }
 
 export interface MetricEntry {
@@ -28,13 +44,21 @@ export interface MetricEntry {
   network_density: number;
   wealth_distribution: number[];
   llm_call_count: number;
+  llm_success_count?: number;
+  llm_success_rate?: number;
   llm_fallback_count: number;
   llm_fallback_rate: number;
+  total_agent_decisions?: number;
+  success_agent_decisions?: number;
+  fallback_agent_decisions?: number;
   avg_llm_latency: number;
   pct_cooperating?: number;
   strategy_counts?: Record<string, number>;
   agents?: AgentSnapshot[];
   llm_stats?: LlmStats;
+  provider_status?: "ok" | "error" | null;
+  provider_error?: string | null;
+  llm_provider_health?: LlmProviderHealth | null;
   /** Present only in aggregate entries – number of runs contributing to this step. */
   run_count?: number;
 }
