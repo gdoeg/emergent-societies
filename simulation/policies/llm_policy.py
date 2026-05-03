@@ -1055,7 +1055,6 @@ class LLMPolicy(AgentPolicy):
                         )
                     
                     if attempt > 0:
-                        self._llm_retry_count += 1
                         logger.info(
                             "LLM retry succeeded after %d attempt(s) with model %s",
                             attempt + 1,
