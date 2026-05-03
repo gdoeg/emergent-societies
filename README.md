@@ -165,6 +165,7 @@ Provider switching is environment-based:
 Render environment variables:
 
 - GROQ_API_KEY=your_key_here
+- GROQ_MODEL=your_supported_model_here
 - ENV=production
 
 Auth env vars:

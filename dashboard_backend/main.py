@@ -81,7 +81,7 @@ def _make_agents(config: SimulationConfig):
         )
         logger.info(
             "Creating shared LLMPolicy for backend agents: model=%s api_base_url=%s",
-            config.llm_model,
+            getattr(provider, "model", config.llm_model),
             config.llm_api_base_url,
         )
         shared_policy = LLMPolicy(
@@ -94,6 +94,7 @@ def _make_agents(config: SimulationConfig):
             batch_size=config.llm_batch_size,
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
+            llm_models=config.llm_models.split(",") if config.llm_models else None,
         )
 
         def agent_policy():
@@ -124,9 +125,11 @@ def _make_policy(config: SimulationConfig):
             llm_timeout=config.llm_timeout,
         )
         logger.info(
-            "Using LLMPolicy in backend: model=%s api_base_url=%s",
-            config.llm_model,
+            "Using LLMPolicy in backend: model=%s api_base_url=%s models=%s max_retries=%s",
+            getattr(provider, "model", config.llm_model),
             config.llm_api_base_url,
+            config.llm_models,
+            config.llm_max_retries,
         )
         return LLMPolicy(
             provider=provider,
@@ -138,6 +141,7 @@ def _make_policy(config: SimulationConfig):
             batch_size=config.llm_batch_size,
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
+            llm_models=config.llm_models.split(",") if config.llm_models else None,
         )
 
     logger.info("Using DeterministicPolicy in backend")
@@ -172,8 +176,35 @@ class RunMultipleRequest(BaseModel):
 
 
 @app.on_event("startup")
-def log_startup():
+async def log_startup():
     logger.info("FastAPI backend started on /metrics, /run, /reset, /aggregate-metrics, /run-multiple")
+    seen_policy_ids = set()
+    for agent in _env.agents:
+        policy = getattr(agent, "policy", None)
+        if not isinstance(policy, LLMPolicy) or id(policy) in seen_policy_ids:
+            continue
+        seen_policy_ids.add(id(policy))
+
+        provider = getattr(policy, "provider", None)
+        if provider is None or not hasattr(provider, "validate_connection"):
+            continue
+
+        health = await provider.validate_connection()
+        if health.get("provider_status") == "error":
+            logger.error(
+                "LLM provider startup validation failed: provider=%s model=%s error=%s message=%s",
+                health.get("provider"),
+                health.get("model"),
+                health.get("provider_error"),
+                health.get("message"),
+            )
+            logger.warning("LLM provider is unhealthy at startup; simulation requests may fall back until this is fixed")
+        else:
+            logger.info(
+                "LLM provider startup validation succeeded: provider=%s model=%s",
+                health.get("provider"),
+                health.get("model"),
+            )
 
 
 def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
@@ -184,10 +215,15 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
     n = len(env.agents)
     llm_call_count = 0
     llm_fallback_count = 0
-    llm_success_count = 0
+    success_agent_decisions = 0
     llm_error_count = 0
     llm_total_latency_seconds = 0.0
     llm_latency_samples = 0
+    total_agent_decisions = 0
+    fallback_agent_decisions = 0
+    llm_provider_health = None
+    provider_status = None
+    provider_error = None
     seen_policy_ids = set()
 
     for agent in env.agents:
@@ -196,16 +232,30 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
             seen_policy_ids.add(id(policy))
             llm_call_count += getattr(policy, "_llm_call_count", 0)
             llm_fallback_count += getattr(policy, "_fallback_count", 0)
-            llm_success_count += getattr(policy, "_llm_success_count", 0)
+            success_agent_decisions += getattr(policy, "_success_agent_decisions", 0)
             llm_error_count += getattr(policy, "_llm_error_count", 0)
             llm_total_latency_seconds += getattr(policy, "_llm_total_latency_seconds", 0.0)
             llm_latency_samples += getattr(policy, "_llm_latency_samples", 0)
+            total_agent_decisions += getattr(policy, "_total_agent_decisions", 0)
+            fallback_agent_decisions += getattr(policy, "_fallback_agent_decisions", 0)
+            provider = getattr(policy, "provider", None)
+            if provider is not None and hasattr(provider, "get_health"):
+                llm_provider_health = provider.get_health()
+                provider_status = llm_provider_health.get("provider_status")
+                provider_error = llm_provider_health.get("provider_error")
 
+    llm_success_rate = (
+        (success_agent_decisions / total_agent_decisions) if total_agent_decisions > 0 else 0.0
+    )
     llm_fallback_rate = (
-        (llm_fallback_count / llm_call_count) if llm_call_count > 0 else 0.0
+        (fallback_agent_decisions / total_agent_decisions) if total_agent_decisions > 0 else 0.0
     )
     avg_llm_latency = (
         (llm_total_latency_seconds / llm_latency_samples) if llm_latency_samples > 0 else 0.0
+    )
+
+    logger.info(
+        f"Agent Decisions: {total_agent_decisions}, Success: {success_agent_decisions}, Fallback: {fallback_agent_decisions}"
     )
 
     # Strategy distribution: count agents currently on each standing strategy.
@@ -225,8 +275,16 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         "wealth_distribution": resources,
         "llm_call_count": llm_call_count,
         "llm_fallback_count": llm_fallback_count,
+        "llm_success_count": success_agent_decisions,
+        "llm_success_rate": llm_success_rate,
         "llm_fallback_rate": llm_fallback_rate,
+        "total_agent_decisions": total_agent_decisions,
+        "success_agent_decisions": success_agent_decisions,
+        "fallback_agent_decisions": fallback_agent_decisions,
         "avg_llm_latency": avg_llm_latency,
+        "provider_status": provider_status,
+        "provider_error": provider_error,
+        "llm_provider_health": llm_provider_health,
         # Strategy breakdown for dashboard visualization
         "pct_cooperating": round(pct_cooperating, 2),
         "strategy_counts": {"cooperate": cooperating, "defect": defecting},
@@ -243,10 +301,13 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         # Structured LLM diagnostics
         "llm_stats": {
             "calls": llm_call_count,
-            "success": llm_success_count,
+            "total_agent_decisions": total_agent_decisions,
+            "success": success_agent_decisions,
             # Parse-only fallbacks = total fallbacks minus exception-based errors
             "fallbacks": max(0, llm_fallback_count - llm_error_count),
             "errors": llm_error_count,
+            "success_rate": llm_success_rate,
+            "fallback_rate": llm_fallback_rate,
             "latency": round(avg_llm_latency * 1000, 2),
         },
     }

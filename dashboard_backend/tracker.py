@@ -55,8 +55,13 @@ _SCALAR_FIELDS = (
     "average_degree",
     "network_density",
     "llm_call_count",
+    "llm_success_count",
+    "llm_success_rate",
     "llm_fallback_count",
     "llm_fallback_rate",
+    "total_agent_decisions",
+    "success_agent_decisions",
+    "fallback_agent_decisions",
     "avg_llm_latency",
     "pct_cooperating",
 )
@@ -97,6 +102,9 @@ def compute_aggregate_metrics(runs: list[SimulationRun]) -> list[dict[str, Any]]
         # single distribution (it would lose the shape information).
         last_snapshot = snapshots[-1] if snapshots else {}
         aggregated["wealth_distribution"] = last_snapshot.get("wealth_distribution", [])
+        aggregated["provider_status"] = last_snapshot.get("provider_status")
+        aggregated["provider_error"] = last_snapshot.get("provider_error")
+        aggregated["llm_provider_health"] = last_snapshot.get("llm_provider_health")
 
         # Aggregate strategy counts by summing then normalising to an average.
         strategy_keys: set[str] = set()
