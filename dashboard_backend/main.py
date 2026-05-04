@@ -22,6 +22,7 @@ from simulation.policies.llm_provider import get_llm_provider
 from metrics.economics import compute_gini, compute_power
 from metrics.metrics import average_degree, network_density
 from dashboard_backend.tracker import SimulationTracker, compute_aggregate_metrics
+from simulation.experiment_tracking.mlflow_tracker import MLflowTracker
 from dotenv import load_dotenv
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +64,9 @@ def _wandb_finish_run(final_metrics: dict, run_id: str, timestamp: str) -> None:
     wandb.finish()
 
 app = FastAPI(title="Emergent Societies Dashboard")
+
+# MLflow tracker – instantiated once at module load; enabled via MLFLOW_ENABLED env var.
+_mlflow_tracker = MLflowTracker()
 
 app.add_middleware(
     CORSMiddleware,
@@ -362,6 +366,9 @@ async def run_simulation(
             },
         )
 
+    # MLflow: start a new run and log config params.
+    _mlflow_tracker.start_run(_config.to_dict())
+
     run_start_len = len(_metrics_history)
     for _ in range(resolved_steps):
         await _env.step_async()
@@ -370,6 +377,9 @@ async def run_simulation(
 
         # W&B: log per-step metrics without blocking the simulation.
         _wandb_log_step(metrics)
+
+        # MLflow: log per-step metrics.
+        _mlflow_tracker.log_metrics(metrics, step=metrics["tick"])
 
     logger.info("Current tick: %d", _env.cycle_count)
 
@@ -381,8 +391,13 @@ async def run_simulation(
 
         # W&B: record final summary metrics and close the run.
         _wandb_finish_run(run_metrics[-1], stored.run_id, stored.timestamp)
+
+        # MLflow: log final summary metrics and end the run.
+        _mlflow_tracker.log_final_metrics(run_metrics[-1])
     elif WANDB_ENABLED:
         wandb.finish()
+
+    _mlflow_tracker.end_run()
 
     return {"status": "ok", "steps_run": resolved_steps, "current_tick": _env.cycle_count}
 
@@ -426,6 +441,9 @@ async def run_multiple_simulations(
                 },
             )
 
+        # MLflow: start a new run for each independent simulation.
+        _mlflow_tracker.start_run(_config.to_dict())
+
         for _ in range(resolved_steps):
             await _env.step_async()
             metrics = _snapshot_metrics(_env, _config)
@@ -433,6 +451,9 @@ async def run_multiple_simulations(
 
             # W&B: log per-step metrics for this independent run.
             _wandb_log_step(metrics)
+
+            # MLflow: log per-step metrics.
+            _mlflow_tracker.log_metrics(metrics, step=metrics["tick"])
 
         stored = _tracker.add_run(_metrics_history)
         logger.info(
@@ -445,6 +466,10 @@ async def run_multiple_simulations(
 
         # W&B: record final summary and close this run before starting the next.
         _wandb_finish_run(_metrics_history[-1], stored.run_id, stored.timestamp)
+
+        # MLflow: log final summary and end this run before starting the next.
+        _mlflow_tracker.log_final_metrics(_metrics_history[-1])
+        _mlflow_tracker.end_run()
 
     aggregate = compute_aggregate_metrics(_tracker.runs)
     return {
