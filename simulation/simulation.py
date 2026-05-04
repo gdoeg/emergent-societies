@@ -1,5 +1,8 @@
+import datetime
+
 from metrics.economics import MetricsLogger, compute_power
 from simulation.config import SimulationConfig
+from simulation.experiment_tracking.tensorboard_logger import TensorBoardLogger
 import logging
 
 logger = logging.getLogger(__name__)
@@ -11,6 +14,10 @@ class Simulation:
         self.config = config
         self.steps = config.num_steps if config is not None else steps
         self.metrics_logger = MetricsLogger()
+
+        run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        self._tb_logger = TensorBoardLogger()
+        self._tb_logger.init_writer(run_id)
 
     def step(self) -> dict:
         """Execute a single simulation tick and record metrics.
@@ -58,6 +65,7 @@ class Simulation:
             max_power=max_power,
         )
         logger.debug(f"Step {step}: Recorded metrics - {metrics}")
+        self._tb_logger.log_metrics(metrics, step=self.world.time)
         return metrics
 
     def run_steps(self, n_steps: int) -> None:
@@ -90,3 +98,4 @@ class Simulation:
             to_run = min(chunk_size, remaining)
             self.run_steps(to_run)
             remaining -= to_run
+        self._tb_logger.close_writer()
