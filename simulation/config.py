@@ -108,6 +108,9 @@ class SimulationConfig:
     chunk_size: int = 10
     # Maximum entries retained in each agent's flat interaction_memory list
     memory_size: int = 50
+    # LLM sampling temperature — higher values increase response randomness.
+    # Can be varied per experiment to study sensitivity to stochasticity.
+    llm_temperature: float = 0.7
 
     def __post_init__(self) -> None:
         """Validate documented configuration constraints and apply environment overrides."""
@@ -192,6 +195,12 @@ class SimulationConfig:
         if self.memory_size < 1:
             raise ValueError("memory_size must be at least 1")
 
+        if not 0.0 <= self.llm_temperature <= 2.0:
+            raise ValueError(
+                # OpenAI and most OpenAI-compatible providers cap temperature at 2.0.
+                "llm_temperature must be within [0.0, 2.0]"
+            )
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
@@ -221,6 +230,7 @@ class SimulationConfig:
             "max_pairs_per_step": self.max_pairs_per_step,
             "chunk_size": self.chunk_size,
             "memory_size": self.memory_size,
+            "llm_temperature": self.llm_temperature,
         }
 
     @classmethod

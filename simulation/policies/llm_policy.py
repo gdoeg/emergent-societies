@@ -6,9 +6,11 @@ Features:
 - Concurrency control via semaphore
 - Comprehensive metrics tracking
 - Structured error handling and logging
+- Agent persona traits, memory compression, and structured JSON output
 """
 
 import asyncio
+import collections
 import concurrent.futures
 import json
 import logging
@@ -37,6 +39,10 @@ _DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
 _FALLBACK_ACTION = "defect"  # temporary for debugging
 # Maximum number of cached decisions kept in memory per policy instance.
 _MAX_CACHE_SIZE = 1024
+# Maximum characters kept for the LLM-provided reasoning field in structured
+# responses.  Reasoning is stored in interaction_memory and log records; this
+# limit keeps per-agent memory usage bounded while preserving a useful summary.
+_MAX_REASONING_LENGTH = 200
 
 # Retry configuration defaults. These must not be read from the environment at
 # import time because entrypoints may call load_dotenv() after importing this
@@ -203,6 +209,135 @@ def summarize_memory(agent, window: int = 10) -> Dict[str, float]:
     }
 
 
+def format_memory_summary(agent, window: int = 10) -> str:
+    """Return a human-readable string compressing recent interaction history.
+
+    Summarises cooperation rate, most frequent opponent behaviour, and the
+    number of betrayals (opponent defected while agent cooperated) so the LLM
+    receives a compact, signal-rich memory section rather than raw logs.
+
+    Args:
+        agent: The agent whose ``interaction_memory`` is summarised.
+        window: Maximum number of recent interactions to consider.
+
+    Returns:
+        A single-line summary string.
+    """
+    stats = summarize_memory(agent, window=window)
+    if stats["recent_interaction_count"] == 0:
+        return "No recent interactions."
+
+    entries = [
+        e
+        for e in list(getattr(agent, "interaction_memory", []))[-window:]
+        if "action" in e and "opponent_action" in e
+    ]
+    opp_actions = [e.get("opponent_action", "") for e in entries]
+    most_common = (
+        collections.Counter(opp_actions).most_common(1)[0][0]
+        if opp_actions
+        else "unknown"
+    )
+    betrayals = sum(
+        1
+        for e in entries
+        if e.get("action") == "cooperate" and e.get("opponent_action") == "defect"
+    )
+    return (
+        f"Last {stats['recent_interaction_count']} interactions — "
+        f"my cooperation rate: {stats['recent_coop_rate']:.0%}, "
+        f"avg reward: {stats['avg_reward']:.2f}, "
+        f"opponents mostly: {most_common}, "
+        f"betrayals suffered: {betrayals}"
+    )
+
+
+def build_state_summary(agent) -> str:
+    """Build a compact human-readable summary of the agent's current internal state.
+
+    Includes wealth, power (treated as synonymous with wealth in this simulation),
+    a fairness gap relative to the population mean, and the current standing strategy.
+
+    Args:
+        agent: The :class:`~simulation.agent.Agent` to summarise.
+
+    Returns:
+        A single-line state summary string.
+    """
+    snapshot = getattr(agent, "population_resources_snapshot", [])
+    if snapshot:
+        mean_wealth = mean(snapshot)
+        fairness_gap = agent.resources - mean_wealth
+        fairness_str = f"{fairness_gap:+.2f} vs population mean {mean_wealth:.2f}"
+    else:
+        fairness_str = "unknown"
+
+    strategy = getattr(agent, "strategy", "unknown")
+    return (
+        f"Wealth: {agent.resources:.2f} | "
+        f"Power: {agent.resources:.2f} | "
+        f"Fairness gap: {fairness_str} | "
+        f"Current strategy: {strategy}"
+    )
+
+
+def build_decision_prompt(agent, state_summary: str, memory_summary: str) -> str:
+    """Build a rich, structured decision prompt for the LLM.
+
+    The prompt includes:
+    - Agent persona traits for consistent, heterogeneous behaviour
+    - Current internal state (wealth, fairness, strategy)
+    - Compressed memory summary
+    - A reward signal grounding the objective
+    - Strict instructions to return JSON-only output
+
+    Args:
+        agent: The :class:`~simulation.agent.Agent` making the decision.
+        state_summary: Output of :func:`build_state_summary`.
+        memory_summary: Output of :func:`format_memory_summary`.
+
+    Returns:
+        A multi-line prompt string.
+    """
+    risk_tolerance = getattr(agent, "risk_tolerance", "medium")
+    social_preference = getattr(agent, "social_preference", "mixed")
+    memory_bias = getattr(agent, "memory_bias", "neutral")
+    goal = getattr(agent, "goal", "balance")
+
+    snapshot = getattr(agent, "population_resources_snapshot", [])
+    if snapshot:
+        mean_wealth = mean(snapshot)
+        reward_hint = (
+            f"reward ≈ wealth({agent.resources:.2f}) "
+            f"- |fairness gap|({abs(agent.resources - mean_wealth):.2f}). "
+            "Maximise long-term reward by balancing wealth accumulation with fairness."
+        )
+    else:
+        reward_hint = (
+            "Your goal is to maximise your long-term reward based on wealth, fairness, and stability."
+        )
+
+    return (
+        "You are an agent in a multi-agent simulation deciding whether to cooperate or defect.\n\n"
+        "=== PERSONA ===\n"
+        f"  risk_tolerance: {risk_tolerance}\n"
+        f"  social_preference: {social_preference}\n"
+        f"  memory_bias: {memory_bias}\n"
+        f"  goal: {goal}\n\n"
+        "=== CURRENT STATE ===\n"
+        f"  {state_summary}\n\n"
+        "=== RECENT MEMORY ===\n"
+        f"  {memory_summary}\n\n"
+        "=== REWARD SIGNAL ===\n"
+        f"  {reward_hint}\n\n"
+        "=== OUTPUT INSTRUCTIONS ===\n"
+        "Respond with ONLY valid JSON — no markdown, no extra text:\n"
+        '{"decision": "cooperate" or "defect", '
+        '"reasoning": "one sentence explanation", '
+        '"confidence": <float 0.0-1.0>}'
+    )
+
+
 class LLMPolicy(AgentPolicy):
     """Policy that asks an LLM to decide whether to cooperate or defect.
 
@@ -238,10 +373,14 @@ class LLMPolicy(AgentPolicy):
         enable_async: bool = True,
         debug_llm: bool = False,
         llm_models: Optional[List[str]] = None,
+        temperature: float = 0.7,
     ) -> None:
         self.model = model
         self.api_base_url = api_base_url.rstrip("/")
         self.timeout = timeout
+        # Sampling temperature forwarded to the LLM provider on every call.
+        # Can be varied per experiment to control decision stochasticity.
+        self.temperature = temperature
         # Provider abstraction lets policy logic stay unchanged while backend
         # selection switches between local Ollama and hosted Groq.
         self.provider: BaseLLMProvider = provider
@@ -279,6 +418,12 @@ class LLMPolicy(AgentPolicy):
         self._fallback_agent_decisions: int = 0
         self._llm_total_latency_seconds: float = 0.0
         self._llm_latency_samples: int = 0
+        # Decision tracking: rolling confidence history and decision sequence
+        # used to compute avg_confidence and decision_volatility metrics.
+        self._confidence_history: List[float] = []
+        self._all_decisions: List[str] = []
+        # One-shot per-run prompt sample logging for observability.
+        self._prompt_sample_logged: bool = False
         if self.provider is None:
             # Defensive fallback preserves previous local defaults if no provider
             # is injected by the caller.
@@ -290,6 +435,36 @@ class LLMPolicy(AgentPolicy):
 
     def _log_fallback(self, reason: str) -> None:
         logger.warning("LLM fallback triggered: %s", reason)
+
+    def reset_prompt_debug_sample(self) -> None:
+        """Allow caller to reset per-run prompt sample logging."""
+        self._prompt_sample_logged = False
+
+    def _maybe_log_prompt_sample(
+        self,
+        agent,
+        state_summary: str,
+        memory_summary: str,
+        prompt: str,
+    ) -> None:
+        """Emit one structured prompt sample log for the current run."""
+        if self._prompt_sample_logged:
+            return
+
+        payload = {
+            "agent_id": getattr(agent, "agent_id", None),
+            "persona": {
+                "risk_tolerance": getattr(agent, "risk_tolerance", "unknown"),
+                "social_preference": getattr(agent, "social_preference", "unknown"),
+                "memory_bias": getattr(agent, "memory_bias", "unknown"),
+                "goal": getattr(agent, "goal", "unknown"),
+            },
+            "state_summary": state_summary,
+            "memory_summary": memory_summary,
+            "final_prompt": prompt,
+        }
+        logger.info("LLM PROMPT SAMPLE %s", json.dumps(payload))
+        self._prompt_sample_logged = True
 
     def _record_llm_success(self, strategy: str) -> None:
         """Track one successful LLM-produced strategy and emit diagnostics."""
@@ -365,6 +540,8 @@ class LLMPolicy(AgentPolicy):
         raw_response: Optional[str] = None
         action = _FALLBACK_ACTION
         used_fallback = False
+        confidence = 0.5
+        reasoning = ""
         other_agent_id = (
             context.agent_id if context is not None and hasattr(context, "agent_id") else None
         )
@@ -376,9 +553,9 @@ class LLMPolicy(AgentPolicy):
                 logger.info("LLM CALLED agent_id=%s", agent.agent_id)
             self._llm_call_count += 1
             started = time.perf_counter()
-            raw_response = self._call_llm(prompt)
+            raw_response = self._call_llm(prompt, expect_json=True)
             self._record_latency(time.perf_counter() - started)
-            action, used_fallback = self._parse_response_with_fallback(raw_response)
+            action, used_fallback, confidence, reasoning = self._parse_response_with_fallback(raw_response)
             if not used_fallback:
                 self._record_llm_success(action)
         except (RateLimitError, LLMTimeoutError, ModelDecommissionedError, InvalidAPIKeyError) as exc:
@@ -401,6 +578,14 @@ class LLMPolicy(AgentPolicy):
             self._fallback_count += 1
             self._fallback_agent_decisions += 1
 
+        # Record decision tracking metrics.
+        self._confidence_history.append(confidence)
+        self._all_decisions.append(action)
+        if hasattr(agent, "decision_history"):
+            agent.decision_history.append(action)
+        if hasattr(agent, "confidence_history"):
+            agent.confidence_history.append(confidence)
+
         log_record: Dict[str, Any] = {
             "action": "decide_action",
             "policy": "llm",
@@ -413,6 +598,8 @@ class LLMPolicy(AgentPolicy):
             "prompt_summary": prompt_summary,
             "raw_response": raw_response,
             "decision": action,
+            "confidence": confidence,
+            "reasoning": reasoning,
             "my_resources": agent.resources,
         }
 
@@ -422,9 +609,10 @@ class LLMPolicy(AgentPolicy):
             self._policy_logger(log_record)
         else:
             logger.info(
-                "LLMPolicy decision: agent_id=%s decision=%s",
+                "LLMPolicy decision: agent_id=%s decision=%s confidence=%.2f",
                 agent.agent_id,
                 action,
+                confidence,
             )
             logger.debug("LLMPolicy full record: %s", json.dumps(log_record))
 
@@ -456,6 +644,8 @@ class LLMPolicy(AgentPolicy):
         action = _FALLBACK_ACTION
         raw_response: Optional[str] = None
         used_fallback = False
+        confidence = 0.5
+        reasoning = ""
 
         self._total_agent_decisions += 1
         try:
@@ -463,9 +653,9 @@ class LLMPolicy(AgentPolicy):
                 logger.info("LLM CALLED agent_id=%s", agent.agent_id)
             self._llm_call_count += 1
             started = time.perf_counter()
-            raw_response = self._call_llm(prompt)
+            raw_response = self._call_llm(prompt, expect_json=True)
             self._record_latency(time.perf_counter() - started)
-            action, used_fallback = self._parse_response_with_fallback(raw_response)
+            action, used_fallback, confidence, reasoning = self._parse_response_with_fallback(raw_response)
             if not used_fallback:
                 self._record_llm_success(action)
         except Exception as exc:  # noqa: BLE001
@@ -482,6 +672,14 @@ class LLMPolicy(AgentPolicy):
             self._fallback_count += 1
             self._fallback_agent_decisions += 1
 
+        # Record decision tracking metrics.
+        self._confidence_history.append(confidence)
+        self._all_decisions.append(action)
+        if hasattr(agent, "decision_history"):
+            agent.decision_history.append(action)
+        if hasattr(agent, "confidence_history"):
+            agent.confidence_history.append(confidence)
+
         log_record: Dict[str, Any] = {
             "action": "strategy_update",
             "policy": "llm",
@@ -492,6 +690,8 @@ class LLMPolicy(AgentPolicy):
             "prompt": prompt,
             "raw_response": raw_response,
             "new_strategy": action,
+            "confidence": confidence,
+            "reasoning": reasoning,
             "my_resources": agent.resources,
         }
 
@@ -499,9 +699,10 @@ class LLMPolicy(AgentPolicy):
             self._policy_logger(log_record)
         else:
             logger.info(
-                "LLMPolicy strategy update: agent_id=%s new_strategy=%s",
+                "LLMPolicy strategy update: agent_id=%s new_strategy=%s confidence=%.2f",
                 agent.agent_id,
                 action,
+                confidence,
             )
 
         agent.interaction_memory.append(log_record)
@@ -514,6 +715,8 @@ class LLMPolicy(AgentPolicy):
         raw_response: Optional[str] = None
         used_fallback = False
         latency_seconds = 0.0
+        confidence = 0.5
+        reasoning = ""
 
         if self.debug_llm:
             logger.info("LLM CALLED agent_id=%s", agent.agent_id)
@@ -522,10 +725,10 @@ class LLMPolicy(AgentPolicy):
         try:
             self._llm_call_count += 1
             started = time.perf_counter()
-            raw_response = await self._call_llm_async(prompt)
+            raw_response = await self._call_llm_async(prompt, expect_json=True)
             latency_seconds = time.perf_counter() - started
             self._record_latency(latency_seconds)
-            action, used_fallback = self._parse_response_with_fallback(raw_response)
+            action, used_fallback, confidence, reasoning = self._parse_response_with_fallback(raw_response)
             if not used_fallback:
                 self._record_llm_success(action)
         except asyncio.TimeoutError:
@@ -556,6 +759,14 @@ class LLMPolicy(AgentPolicy):
             self._fallback_count += 1
             self._fallback_agent_decisions += 1
 
+        # Record decision tracking metrics.
+        self._confidence_history.append(confidence)
+        self._all_decisions.append(action)
+        if hasattr(agent, "decision_history"):
+            agent.decision_history.append(action)
+        if hasattr(agent, "confidence_history"):
+            agent.confidence_history.append(confidence)
+
         log_record: Dict[str, Any] = {
             "action": "strategy_update",
             "policy": "llm",
@@ -566,6 +777,8 @@ class LLMPolicy(AgentPolicy):
             "prompt": prompt,
             "raw_response": raw_response,
             "new_strategy": action,
+            "confidence": confidence,
+            "reasoning": reasoning,
             "my_resources": agent.resources,
             "llm_latency_seconds": latency_seconds,
         }
@@ -658,67 +871,23 @@ class LLMPolicy(AgentPolicy):
             return {agent.agent_id: self.generate_strategy(agent) for agent in agent_batch}
 
     def _build_strategy_prompt(self, agent) -> str:
-        """Build a minimal prompt for a periodic strategy update.
+        """Build a structured decision prompt for a periodic strategy update.
 
-        Intentionally compact — only own state, recent interaction history,
-        and average trust — to keep token counts low and latency within the
-        configured timeout.
+        Delegates to the module-level :func:`build_decision_prompt` helper so
+        that the prompt includes the agent's persona traits, compressed memory,
+        state summary, and strict JSON output instructions.
 
         Args:
             agent: The agent requesting the strategy update.
 
         Returns:
-            A multi-line prompt string.
+            A multi-line prompt string requesting JSON output.
         """
-        resources = agent.resources
-        rel_wealth = self._relative_wealth_section(agent)
-        memory_stats = summarize_memory(agent, window=10)
-
-        # Recent interactions: at most the last 10 true interaction entries.
-        recent = [
-            e
-            for e in list(getattr(agent, "interaction_memory", []))[-10:]
-            if "step" in e and "action" in e and "opponent_action" in e and "reward" in e
-        ]
-        if recent:
-            history_lines = "\n".join(
-                f"  - step {e['step']}: I played {e['action']}, "
-                f"opponent played {e['opponent_action']}, reward={e['reward']}"
-                for e in recent
-            )
-            history_section = f"Recent interactions:\n{history_lines}\n"
-        else:
-            history_section = "Recent interactions: none\n"
-
-        # Average trust across all known relationships
-        relationships = getattr(agent, "relationships", {})
-        if relationships:
-            avg_trust = sum(r["trust"] for r in relationships.values()) / len(relationships)
-            trust_str = f"{avg_trust:.2f}"
-        else:
-            trust_str = "no data"
-
-        env_ctx = getattr(agent, "simulation_context", {})
-        scarcity = env_ctx.get("scarcity_level", "unknown")
-
-        return (
-            "You are setting your strategy for the next several interactions "
-            "in a simulated society.\n\n"
-            f"Your state:\n"
-            f"  - Resources: {resources}\n"
-            f"  - Relative wealth: {rel_wealth}\n"
-            f"  - Average trust toward others: {trust_str}\n"
-            f"  - Scarcity level: {scarcity}\n\n"
-            "Recent summary statistics:\n"
-            f"  - recent_interaction_count: {memory_stats.get('recent_interaction_count', 0)}\n"
-            f"  - total_interaction_count: {memory_stats.get('total_interaction_count', 0)}\n"
-            f"  - recent_cooperation_rate: {memory_stats.get('recent_coop_rate', 0.0):.2f}\n"
-            f"  - defection_rate: {memory_stats.get('defect_rate', 0.0):.2f}\n"
-            f"  - average_reward: {memory_stats.get('avg_reward', 0.0):.2f}\n\n"
-            f"{history_section}\n"
-            "Choose the strategy that best serves your long-term interests.\n"
-            "Respond with ONLY one word: cooperate or defect"
-        )
+        state_summary = build_state_summary(agent)
+        memory_summary = format_memory_summary(agent, window=10)
+        prompt = build_decision_prompt(agent, state_summary, memory_summary)
+        self._maybe_log_prompt_sample(agent, state_summary, memory_summary, prompt)
+        return prompt
 
     # ------------------------------------------------------------------
     # Cache helpers
@@ -759,38 +928,38 @@ class LLMPolicy(AgentPolicy):
     # ------------------------------------------------------------------
 
     def _build_prompt(self, agent, context) -> str:
-        """Construct the natural-language prompt sent to the LLM.
+        """Construct the structured decision prompt sent to the LLM.
+
+        Builds the rich, persona-aware prompt via the module-level
+        :func:`build_decision_prompt` helper, supplemented with opponent and
+        relationship context that is only available in per-interaction calls.
 
         Args:
             agent: The deciding agent.
             context: The opponent agent or world object.
 
         Returns:
-            A multi-line prompt string.
+            A multi-line prompt string requesting JSON output.
         """
-        agent_state_section = self._agent_state_section(agent)
+        state_summary = build_state_summary(agent)
+        memory_summary = format_memory_summary(agent, window=10)
+        base_prompt = build_decision_prompt(agent, state_summary, memory_summary)
+
+        # Append opponent and relationship context when available.
         opponent_section = self._opponent_section(agent, context)
         relationship_section = self._relationship_section(agent, context)
-        history_section = self._history_section(agent, context)
         environment_section = self._environment_section(agent)
 
-        return (
-            "You are making one strategic choice in a simulated society with pairwise interactions.\n\n"
-            f"{agent_state_section}"
-            f"{opponent_section}"
-            f"{relationship_section}"
-            f"\n"
-            f"{history_section}"
-            f"\n"
-            f"{environment_section}"
-            f"\n"
-            "Incentives:\n"
-            "  - Cooperation can increase total wealth when both sides cooperate, but you may be exploited if the other defects.\n"
-            "  - Defection can protect your own position in the short term, but repeated defection reduces trust and can damage future gains.\n"
-            "\n"
-            "Based on this context, decide your next action.\n"
-            "Respond with ONLY one word: cooperate or defect"
+        prompt = (
+            base_prompt
+            + "\n\n"
+            + "=== OPPONENT & ENVIRONMENT ===\n"
+            + opponent_section
+            + relationship_section
+            + environment_section
         )
+        self._maybe_log_prompt_sample(agent, state_summary, memory_summary, prompt)
+        return prompt
 
     def _agent_state_section(self, agent) -> str:
         """Return a prompt section describing the deciding agent's own state."""
@@ -954,7 +1123,16 @@ class LLMPolicy(AgentPolicy):
                     f"avg_trust={avg_trust:.2f}"
                 )
             )
-        return "\n".join(lines)
+        prompt = "\n".join(lines)
+        if agent_batch:
+            sample_agent = agent_batch[0]
+            self._maybe_log_prompt_sample(
+                sample_agent,
+                build_state_summary(sample_agent),
+                format_memory_summary(sample_agent, window=10),
+                prompt,
+            )
+        return prompt
 
     def _parse_batch_response(self, text: str, agent_batch: List[Any]) -> Dict[Any, str]:
         """Parse batched strategy JSON into an agent_id -> action mapping."""
@@ -980,7 +1158,7 @@ class LLMPolicy(AgentPolicy):
                 continue
             strategy = str(raw_action)
             strategy = strategy.strip().lower()
-            action, used_fallback = self._parse_response_with_fallback(strategy)
+            action, used_fallback, _confidence, _reasoning = self._parse_response_with_fallback(strategy)
             if used_fallback:
                 self._fallback_count += 1
                 self._fallback_agent_decisions += 1
@@ -998,16 +1176,17 @@ class LLMPolicy(AgentPolicy):
         max_tokens is kept for compatibility with existing call sites.
         """
         del max_tokens  # handled internally by providers when needed
+        temperature = self.temperature
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.provider.generate(prompt, expect_json=expect_json))
+            return asyncio.run(self.provider.generate(prompt, expect_json=expect_json, temperature=temperature))
 
         # If called inside an existing loop, run provider generation in a
         # dedicated worker thread with its own event loop.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(
-                lambda: asyncio.run(self.provider.generate(prompt, expect_json=expect_json))
+                lambda: asyncio.run(self.provider.generate(prompt, expect_json=expect_json, temperature=temperature))
             )
             return future.result()
 
@@ -1048,7 +1227,7 @@ class LLMPolicy(AgentPolicy):
                     
                     async with self._semaphore:
                         response = await asyncio.wait_for(
-                            provider.generate(prompt, expect_json=expect_json),
+                            provider.generate(prompt, expect_json=expect_json, temperature=self.temperature),
                             timeout=self.timeout,
                         )
                     
@@ -1157,7 +1336,32 @@ class LLMPolicy(AgentPolicy):
     def get_llm_retry_count(self) -> int:
         """Return total number of LLM retries that occurred."""
         return self._llm_retry_count
-    
+
+    def get_avg_confidence(self) -> float:
+        """Return the average LLM-reported decision confidence across all decisions.
+
+        Returns ``0.0`` when no decisions have been recorded yet.
+        """
+        if not self._confidence_history:
+            return 0.0
+        return sum(self._confidence_history) / len(self._confidence_history)
+
+    def get_decision_volatility(self) -> float:
+        """Return the fraction of consecutive decisions that changed.
+
+        Computed as ``(number of switches) / (total decisions - 1)``.
+        A value of ``0.0`` means every decision was the same; ``1.0`` means
+        every consecutive pair of decisions was different.  Returns ``0.0``
+        when fewer than two decisions have been recorded.
+        """
+        decisions = self._all_decisions
+        if len(decisions) < 2:
+            return 0.0
+        switches = sum(
+            1 for a, b in zip(decisions, decisions[1:]) if a != b
+        )
+        return switches / (len(decisions) - 1)
+
     def get_llm_metrics(self) -> Dict[str, Any]:
         """Return comprehensive LLM metrics for dashboard/logging."""
         total_decisions = self._total_agent_decisions
@@ -1191,37 +1395,59 @@ class LLMPolicy(AgentPolicy):
             "configured_models": self.llm_models,
             "max_retries": _MAX_RETRIES,
             "max_concurrency": self.max_concurrent_llm_calls,
+            "avg_confidence": self.get_avg_confidence(),
+            "decision_volatility": self.get_decision_volatility(),
         }
 
     # ------------------------------------------------------------------
     # Response parsing
     # ------------------------------------------------------------------
 
-    def _parse_response_with_fallback(self, text: str) -> Tuple[str, bool]:
-        """Extract ``"cooperate"`` or ``"defect"`` from *text*.
+    def _parse_response_with_fallback(self, text: str) -> Tuple[str, bool, float, str]:
+        """Extract a decision from *text*, handling structured JSON and plain text.
 
-        The parser first attempts a strict word-boundary match so that
-        responses such as ``"I will not cooperate, I will defect"`` resolve to
-        ``"defect"`` rather than the first substring hit.  It falls back to a
-        simple substring scan when no word-boundary match is found, and
-        finally returns ``_FALLBACK_ACTION`` when neither keyword is present.
+        Tries to parse a JSON object with ``"decision"``, ``"confidence"``, and
+        ``"reasoning"`` fields first.  Falls back to a word-boundary keyword
+        search when JSON parsing fails, with ``confidence=0.5`` and empty
+        ``reasoning`` as defaults.
 
         Args:
             text: Raw text returned by the LLM.
 
         Returns:
-            Tuple ``(action, used_fallback)`` where action is ``"cooperate"`` or
-            ``"defect"``.
+            Tuple ``(action, used_fallback, confidence, reasoning)`` where
+            action is ``"cooperate"`` or ``"defect"``, used_fallback indicates
+            whether neither JSON nor keyword parsing succeeded, confidence is a
+            float in [0.0, 1.0], and reasoning is a short explanation string.
         """
-        strategy = text.strip().lower()
-        normalised = strategy
+        # --- Attempt 1: structured JSON ---
+        json_text = text.strip()
+        # Strip markdown code fences: some LLMs wrap JSON in ```json ... ```
+        # despite explicit instructions to output raw JSON only.
+        if json_text.startswith("```"):
+            json_text = re.sub(r"^```(?:json)?\s*", "", json_text, flags=re.IGNORECASE)
+            json_text = re.sub(r"\s*```$", "", json_text.strip())
+        try:
+            payload = json.loads(json_text)
+            if isinstance(payload, dict) and "decision" in payload:
+                raw_decision = str(payload.get("decision", "")).strip().lower()
+                if raw_decision in ("cooperate", "defect"):
+                    raw_confidence = payload.get("confidence", 0.5)
+                    try:
+                        confidence = float(raw_confidence)
+                        confidence = max(0.0, min(1.0, confidence))
+                    except (TypeError, ValueError):
+                        confidence = 0.5
+                    reasoning = str(payload.get("reasoning", ""))[:_MAX_REASONING_LENGTH]
+                    return raw_decision, False, confidence, reasoning
+        except (json.JSONDecodeError, ValueError):
+            pass
 
-        # Try to find the *last* occurrence of either keyword as a whole word.
-        # "last" is used because LLMs sometimes prepend filler text and end
-        # with the actual decision.
+        # --- Attempt 2: plain text keyword search ---
+        normalised = text.strip().lower()
         matches = list(re.finditer(r"\b(cooperate|defect)\b", normalised))
         if matches:
-            return matches[-1].group(1), False
+            return matches[-1].group(1), False, 0.5, ""
 
         self._log_fallback(f"reason=unparseable_response detail={text!r}")
-        return _FALLBACK_ACTION, True
+        return _FALLBACK_ACTION, True, 0.5, ""

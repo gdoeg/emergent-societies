@@ -56,6 +56,14 @@ class Agent:
         self.simulation_context: Dict[str, Any] = {}
         self.population_resources_snapshot = []
 
+        # --- Agent persona (fixed at creation for heterogeneity) ---
+        # These traits are injected into LLM prompts to produce consistent,
+        # differentiated decision-making behaviour across agents.
+        self.risk_tolerance: str = random.choice(["low", "medium", "high"])
+        self.social_preference: str = random.choice(["cooperative", "selfish", "mixed"])
+        self.memory_bias: str = random.choice(["forgiving", "retaliatory", "neutral"])
+        self.goal: str = random.choice(["maximize_wealth", "maintain_fairness", "balance"])
+
         # --- Periodic strategy model ---
         # Standing strategy used for all interactions until the next LLM update.
         # Stochastic seeding reduces deterministic bias while remaining reproducible
@@ -66,6 +74,12 @@ class Agent:
         # Flat interaction log used as LLM context for strategy updates.
         # Structure per entry: {step, opponent_id, action, opponent_action, reward}
         self.interaction_memory: List[Dict[str, Any]] = []
+
+        # --- Decision tracking metrics ---
+        # Sequence of LLM decisions for volatility analysis (oldest first).
+        self.decision_history: List[str] = []
+        # Sequence of LLM confidence scores aligned with decision_history.
+        self.confidence_history: List[float] = []
     
     def get_relationship(self, other_id) -> RelationshipRecord:
         """

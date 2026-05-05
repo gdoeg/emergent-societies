@@ -7,6 +7,22 @@ export interface AgentSnapshot {
   wealth: number;
   power: number;
   strategy: string;
+  risk_tolerance: string;
+  social_preference: string;
+  memory_bias: string;
+  goal: string;
+  latest_decision?: string;
+  latest_confidence?: number | null;
+  latest_reasoning?: string;
+  decision_history?: string[];
+  confidence_history?: number[];
+}
+
+export interface AvgConfidenceByPersonaType {
+  risk_tolerance: Record<string, number>;
+  social_preference: Record<string, number>;
+  memory_bias: Record<string, number>;
+  goal: Record<string, number>;
 }
 
 export interface LlmStats {
@@ -55,6 +71,10 @@ export interface MetricEntry {
   pct_cooperating?: number;
   strategy_counts?: Record<string, number>;
   agents?: AgentSnapshot[];
+  cooperation_rate_by_social_preference?: Record<string, number>;
+  defect_rate_by_social_preference?: Record<string, number>;
+  avg_confidence_by_persona_type?: AvgConfidenceByPersonaType;
+  strategy_switching_rate_by_risk_tolerance?: Record<string, number>;
   llm_stats?: LlmStats;
   provider_status?: "ok" | "error" | null;
   provider_error?: string | null;

@@ -8,11 +8,14 @@ import StrategyOverTimeChart from "@/components/StrategyOverTimeChart";
 
 interface AgentInsightsProps {
   metrics: MetricEntry[];
+  fallbackMetrics?: MetricEntry[];
 }
 
-export default function AgentInsights({ metrics }: AgentInsightsProps) {
+export default function AgentInsights({ metrics, fallbackMetrics = [] }: AgentInsightsProps) {
   const latest = metrics.length > 0 ? metrics[metrics.length - 1] : null;
-  const agents: AgentSnapshot[] = latest?.agents ?? [];
+  const latestWithAgents = [...metrics].reverse().find((entry) => (entry.agents?.length ?? 0) > 0) ?? null;
+  const fallbackWithAgents = [...fallbackMetrics].reverse().find((entry) => (entry.agents?.length ?? 0) > 0) ?? null;
+  const agents: AgentSnapshot[] = latestWithAgents?.agents ?? fallbackWithAgents?.agents ?? latest?.agents ?? [];
 
   return (
     <div className="grid flex-1 min-h-0 min-w-0 grid-cols-1 auto-rows-fr gap-1.5 lg:grid-cols-2">

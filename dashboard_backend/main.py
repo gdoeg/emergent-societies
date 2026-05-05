@@ -5,6 +5,7 @@ import random
 import sys
 import os
 import logging
+from collections import defaultdict
 from statistics import mean
 
 # Ensure the repo root is on sys.path so simulation/metrics can be imported
@@ -30,6 +31,135 @@ from dotenv import load_dotenv
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard_backend")
+
+
+def _latest_llm_observation(agent: Agent) -> tuple[float | None, str, str]:
+    """Return latest confidence, reasoning, and decision from LLM log records."""
+    for entry in reversed(getattr(agent, "interaction_memory", [])):
+        if entry.get("action") not in {"decide_action", "strategy_update"}:
+            continue
+        raw_confidence = entry.get("confidence")
+        confidence = None
+        if isinstance(raw_confidence, (int, float)):
+            confidence = float(raw_confidence)
+        reasoning = str(entry.get("reasoning", ""))
+        decision = str(entry.get("decision") or entry.get("new_strategy") or "")
+        return confidence, reasoning, decision
+    return None, "", ""
+
+
+def _persona_observability_metrics(env: Environment) -> dict:
+    """Aggregate persona-conditioned observability metrics from agent histories."""
+    social_action_counts: dict[str, int] = defaultdict(int)
+    social_coop_counts: dict[str, int] = defaultdict(int)
+    social_defect_counts: dict[str, int] = defaultdict(int)
+
+    confidence_by_risk: dict[str, list[float]] = defaultdict(list)
+    confidence_by_social: dict[str, list[float]] = defaultdict(list)
+    confidence_by_memory: dict[str, list[float]] = defaultdict(list)
+    confidence_by_goal: dict[str, list[float]] = defaultdict(list)
+
+    strategy_sequences_by_risk: dict[str, list[str]] = defaultdict(list)
+
+    for agent in env.agents:
+        risk_tolerance = str(getattr(agent, "risk_tolerance", "unknown"))
+        social_preference = str(getattr(agent, "social_preference", "unknown"))
+        memory_bias = str(getattr(agent, "memory_bias", "unknown"))
+        goal = str(getattr(agent, "goal", "unknown"))
+
+        for entry in getattr(agent, "interaction_memory", []):
+            action = entry.get("action")
+            if action in {"cooperate", "defect"}:
+                social_action_counts[social_preference] += 1
+                if action == "cooperate":
+                    social_coop_counts[social_preference] += 1
+                else:
+                    social_defect_counts[social_preference] += 1
+
+            if action in {"decide_action", "strategy_update"}:
+                raw_confidence = entry.get("confidence")
+                if isinstance(raw_confidence, (int, float)):
+                    confidence = float(raw_confidence)
+                    confidence_by_risk[risk_tolerance].append(confidence)
+                    confidence_by_social[social_preference].append(confidence)
+                    confidence_by_memory[memory_bias].append(confidence)
+                    confidence_by_goal[goal].append(confidence)
+
+            if action == "strategy_update":
+                new_strategy = str(entry.get("new_strategy", "")).strip().lower()
+                if new_strategy in {"cooperate", "defect"}:
+                    strategy_sequences_by_risk[risk_tolerance].append(new_strategy)
+
+    def _rate_map(numerator: dict[str, int], denominator: dict[str, int]) -> dict[str, float]:
+        keys = set(denominator.keys()) | set(numerator.keys())
+        return {
+            key: (float(numerator.get(key, 0)) / denominator[key]) if denominator.get(key, 0) > 0 else 0.0
+            for key in sorted(keys)
+        }
+
+    def _avg_map(values: dict[str, list[float]]) -> dict[str, float]:
+        return {
+            key: (sum(vals) / len(vals)) if vals else 0.0
+            for key, vals in sorted(values.items())
+        }
+
+    strategy_switching_rate_by_risk_tolerance: dict[str, float] = {}
+    for risk_tolerance, sequence in sorted(strategy_sequences_by_risk.items()):
+        if len(sequence) < 2:
+            strategy_switching_rate_by_risk_tolerance[risk_tolerance] = 0.0
+            continue
+        switches = sum(1 for prev, curr in zip(sequence, sequence[1:]) if prev != curr)
+        strategy_switching_rate_by_risk_tolerance[risk_tolerance] = switches / (len(sequence) - 1)
+
+    return {
+        "cooperation_rate_by_social_preference": _rate_map(social_coop_counts, social_action_counts),
+        "defect_rate_by_social_preference": _rate_map(social_defect_counts, social_action_counts),
+        "avg_confidence_by_persona_type": {
+            "risk_tolerance": _avg_map(confidence_by_risk),
+            "social_preference": _avg_map(confidence_by_social),
+            "memory_bias": _avg_map(confidence_by_memory),
+            "goal": _avg_map(confidence_by_goal),
+        },
+        "strategy_switching_rate_by_risk_tolerance": strategy_switching_rate_by_risk_tolerance,
+    }
+
+
+def _reset_llm_prompt_sample_logging(env: Environment) -> None:
+    """Reset one-shot LLM prompt sample logging for each shared policy instance."""
+    seen_policy_ids = set()
+    for agent in env.agents:
+        policy = getattr(agent, "policy", None)
+        if not isinstance(policy, LLMPolicy) or id(policy) in seen_policy_ids:
+            continue
+        seen_policy_ids.add(id(policy))
+        if hasattr(policy, "reset_prompt_debug_sample"):
+            policy.reset_prompt_debug_sample()
+
+
+def _agent_snapshot(agent: Agent) -> dict:
+    """Build dashboard agent payload including persona observability fields."""
+    latest_confidence, latest_reasoning, latest_decision = _latest_llm_observation(agent)
+    decision_history = [str(decision) for decision in getattr(agent, "decision_history", [])]
+    confidence_history = [
+        float(confidence)
+        for confidence in getattr(agent, "confidence_history", [])
+        if isinstance(confidence, (int, float))
+    ]
+    return {
+        "id": agent.id,
+        "wealth": agent.resources,
+        "power": compute_power(agent),
+        "strategy": agent.strategy,
+        "risk_tolerance": getattr(agent, "risk_tolerance", "unknown"),
+        "social_preference": getattr(agent, "social_preference", "unknown"),
+        "memory_bias": getattr(agent, "memory_bias", "unknown"),
+        "goal": getattr(agent, "goal", "unknown"),
+        "latest_decision": latest_decision,
+        "latest_confidence": latest_confidence,
+        "latest_reasoning": latest_reasoning,
+        "decision_history": decision_history,
+        "confidence_history": confidence_history,
+    }
 
 # W&B is optional – the simulation runs normally if the package is absent.
 try:
@@ -111,6 +241,7 @@ def _make_agents(config: SimulationConfig):
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
             llm_models=config.llm_models.split(",") if config.llm_models else None,
+            temperature=getattr(config, "llm_temperature", 0.7),
         )
 
         def agent_policy():
@@ -158,6 +289,7 @@ def _make_policy(config: SimulationConfig):
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
             llm_models=config.llm_models.split(",") if config.llm_models else None,
+            temperature=getattr(config, "llm_temperature", 0.7),
         )
 
     logger.info("Using DeterministicPolicy in backend")
@@ -280,6 +412,7 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
     cooperating = sum(1 for a in env.agents if getattr(a, "strategy", None) == "cooperate")
     defecting = sum(1 for a in env.agents if getattr(a, "strategy", None) == "defect")
     pct_cooperating = (cooperating / n * 100.0) if n > 0 else 0.0
+    persona_metrics = _persona_observability_metrics(env)
 
     return {
         "tick": env.cycle_count,
@@ -308,13 +441,20 @@ def _snapshot_metrics(env: Environment, config: SimulationConfig) -> dict:
         "strategy_counts": {"cooperate": cooperating, "defect": defecting},
         # Per-agent snapshot for interpretability view
         "agents": [
-            {
-                "id": agent.id,
-                "wealth": agent.resources,
-                "power": compute_power(agent),
-                "strategy": agent.strategy,
-            }
+            _agent_snapshot(agent)
             for agent in env.agents
+        ],
+        "cooperation_rate_by_social_preference": persona_metrics[
+            "cooperation_rate_by_social_preference"
+        ],
+        "defect_rate_by_social_preference": persona_metrics[
+            "defect_rate_by_social_preference"
+        ],
+        "avg_confidence_by_persona_type": persona_metrics[
+            "avg_confidence_by_persona_type"
+        ],
+        "strategy_switching_rate_by_risk_tolerance": persona_metrics[
+            "strategy_switching_rate_by_risk_tolerance"
         ],
         # Structured LLM diagnostics
         "llm_stats": {
@@ -365,6 +505,7 @@ async def run_simulation(
 
     _seed_metrics_history()
     logger.info("POST /run steps=%s", resolved_steps)
+    _reset_llm_prompt_sample_logging(_env)
 
     tb_logger = _new_tensorboard_logger("run")
 
@@ -452,6 +593,7 @@ async def run_multiple_simulations(
 
     for run_idx in range(num_runs):
         _env, _config = _new_environment()
+        _reset_llm_prompt_sample_logging(_env)
         _metrics_history = [_snapshot_metrics(_env, _config)]
         tb_logger = _new_tensorboard_logger(f"multi_{run_idx}")
 
