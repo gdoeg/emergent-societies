@@ -21,6 +21,24 @@ metrics
     avg_power       REAL
     max_power       REAL
     network_density REAL
+
+derived_metrics
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT
+    run_id              INTEGER  REFERENCES runs(id)
+    gini_slope          REAL
+    stability           REAL
+    elite_share         REAL
+    switching_rate      REAL
+    network_clustering  REAL
+
+config_aggregates
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT
+    config_name         TEXT
+    metric_name         TEXT
+    mean                REAL
+    std                 REAL
+    num_runs            INTEGER
+    timestamp           TEXT  (ISO-8601)
 """
 
 import sqlite3
@@ -42,7 +60,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create the ``runs`` and ``metrics`` tables if they do not yet exist."""
+    """Create all simulation tables if they do not yet exist."""
     with _connect() as conn:
         conn.execute(
             """
@@ -67,6 +85,32 @@ def init_db() -> None:
                 avg_power       REAL,
                 max_power       REAL,
                 network_density REAL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS derived_metrics (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id             INTEGER NOT NULL REFERENCES runs(id),
+                gini_slope         REAL,
+                stability          REAL,
+                elite_share        REAL,
+                switching_rate     REAL,
+                network_clustering REAL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS config_aggregates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_name TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                mean        REAL,
+                std         REAL,
+                num_runs    INTEGER,
+                timestamp   TEXT
             )
             """
         )
@@ -161,5 +205,110 @@ def get_metrics(run_id: int) -> List[Dict[str, Any]]:
         rows = conn.execute(
             "SELECT * FROM metrics WHERE run_id = ? ORDER BY step",
             (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_derived_metrics(run_id: int, derived: Dict[str, Any]) -> None:
+    """Insert derived metrics for a completed simulation run.
+
+    Args:
+        run_id: Foreign key referencing the ``runs`` row.
+        derived: Dict as returned by
+            :func:`~simulation.experiments.derived_metrics.compute_all`.
+            Recognised keys: ``gini_slope``, ``stability``, ``elite_share``,
+            ``switching_rate``, ``network_clustering``.  Missing keys are
+            stored as ``NULL``.
+    """
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO derived_metrics
+                (run_id, gini_slope, stability, elite_share, switching_rate, network_clustering)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                derived.get("gini_slope"),
+                derived.get("stability"),
+                derived.get("elite_share"),
+                derived.get("switching_rate"),
+                derived.get("network_clustering"),
+            ),
+        )
+        conn.commit()
+    logger.debug("Inserted derived_metrics for run_id=%d", run_id)
+
+
+def insert_config_aggregate(
+    config_name: str,
+    metric_name: str,
+    mean: float,
+    std: float,
+    num_runs: int,
+) -> None:
+    """Persist aggregated (mean ± std) derived metrics for a config batch.
+
+    Args:
+        config_name: Identifier of the experiment configuration.
+        metric_name: Name of the derived metric being aggregated (e.g.
+            ``"gini_slope"``).
+        mean: Mean value of the metric across all runs.
+        std: Standard deviation of the metric across all runs.
+        num_runs: Number of runs that were aggregated.
+    """
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO config_aggregates
+                (config_name, metric_name, mean, std, num_runs, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (config_name, metric_name, mean, std, num_runs, timestamp),
+        )
+        conn.commit()
+    logger.debug(
+        "Inserted config_aggregate config_name=%s metric=%s mean=%.4f std=%.4f",
+        config_name,
+        metric_name,
+        mean,
+        std,
+    )
+
+
+def get_derived_metrics(run_id: int) -> Optional[Dict[str, Any]]:
+    """Return the derived metrics row for a given run, or ``None``.
+
+    Args:
+        run_id: Primary key of the run in the ``runs`` table.
+
+    Returns:
+        Dict with keys ``id``, ``run_id``, ``gini_slope``, ``stability``,
+        ``elite_share``, ``switching_rate``, ``network_clustering``, or
+        ``None`` when no derived metrics have been stored for the run.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM derived_metrics WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def get_config_aggregates(config_name: str) -> List[Dict[str, Any]]:
+    """Return all aggregate rows for a given configuration name.
+
+    Args:
+        config_name: Configuration identifier to filter by.
+
+    Returns:
+        List of dicts with keys ``id``, ``config_name``, ``metric_name``,
+        ``mean``, ``std``, ``num_runs``, ``timestamp``.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM config_aggregates WHERE config_name = ? ORDER BY id",
+            (config_name,),
         ).fetchall()
     return [dict(row) for row in rows]
