@@ -1,5 +1,6 @@
 """FastAPI backend for the emergent-societies simulation dashboard."""
 
+import datetime
 import random
 import sys
 import os
@@ -23,6 +24,7 @@ from metrics.economics import compute_gini, compute_power
 from metrics.metrics import average_degree, network_density
 from dashboard_backend.tracker import SimulationTracker, compute_aggregate_metrics
 from simulation.experiment_tracking.mlflow_tracker import MLflowTracker
+from simulation.experiment_tracking.tensorboard_logger import TensorBoardLogger
 from dotenv import load_dotenv
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -67,6 +69,15 @@ app = FastAPI(title="Emergent Societies Dashboard")
 
 # MLflow tracker – instantiated once at module load; enabled via MLFLOW_ENABLED env var.
 _mlflow_tracker = MLflowTracker()
+
+
+def _new_tensorboard_logger(run_label: str) -> TensorBoardLogger:
+    """Create a TensorBoard logger for a backend-triggered run."""
+    run_id = f"backend_{run_label}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    tb_logger = TensorBoardLogger()
+    tb_logger.init_writer(run_id)
+    logger.info("TensorBoard logger prepared for backend run_id=%s", run_id)
+    return tb_logger
 
 app.add_middleware(
     CORSMiddleware,
@@ -352,6 +363,8 @@ async def run_simulation(
     _seed_metrics_history()
     logger.info("POST /run steps=%s", resolved_steps)
 
+    tb_logger = _new_tensorboard_logger("run")
+
     # W&B: initialise a new run for this simulation (one run per /run call).
     if WANDB_ENABLED:
         wandb.init(
@@ -370,34 +383,39 @@ async def run_simulation(
     _mlflow_tracker.start_run(_config.to_dict())
 
     run_start_len = len(_metrics_history)
-    for _ in range(resolved_steps):
-        await _env.step_async()
-        metrics = _snapshot_metrics(_env, _config)
-        _metrics_history.append(metrics)
+    try:
+        for _ in range(resolved_steps):
+            await _env.step_async()
+            metrics = _snapshot_metrics(_env, _config)
+            _metrics_history.append(metrics)
 
-        # W&B: log per-step metrics without blocking the simulation.
-        _wandb_log_step(metrics)
+            # W&B: log per-step metrics without blocking the simulation.
+            _wandb_log_step(metrics)
 
-        # MLflow: log per-step metrics.
-        _mlflow_tracker.log_metrics(metrics, step=metrics["tick"])
+            # MLflow: log per-step metrics.
+            _mlflow_tracker.log_metrics(metrics, step=metrics["tick"])
 
-    logger.info("Current tick: %d", _env.cycle_count)
+            # TensorBoard: log per-step metrics.
+            tb_logger.log_metrics(metrics, step=metrics["tick"])
 
-    # Store the newly generated portion of history as a completed run.
-    run_metrics = _metrics_history[run_start_len:]
-    if run_metrics:
-        stored = _tracker.add_run(run_metrics)
-        logger.info("Stored run %s in tracker (total runs: %d)", stored.run_id, _tracker.run_count)
+        logger.info("Current tick: %d", _env.cycle_count)
 
-        # W&B: record final summary metrics and close the run.
-        _wandb_finish_run(run_metrics[-1], stored.run_id, stored.timestamp)
+        # Store the newly generated portion of history as a completed run.
+        run_metrics = _metrics_history[run_start_len:]
+        if run_metrics:
+            stored = _tracker.add_run(run_metrics)
+            logger.info("Stored run %s in tracker (total runs: %d)", stored.run_id, _tracker.run_count)
 
-        # MLflow: log final summary metrics and end the run.
-        _mlflow_tracker.log_final_metrics(run_metrics[-1])
-    elif WANDB_ENABLED:
-        wandb.finish()
+            # W&B: record final summary metrics and close the run.
+            _wandb_finish_run(run_metrics[-1], stored.run_id, stored.timestamp)
 
-    _mlflow_tracker.end_run()
+            # MLflow: log final summary metrics and end the run.
+            _mlflow_tracker.log_final_metrics(run_metrics[-1])
+        elif WANDB_ENABLED:
+            wandb.finish()
+    finally:
+        tb_logger.close_writer()
+        _mlflow_tracker.end_run()
 
     return {"status": "ok", "steps_run": resolved_steps, "current_tick": _env.cycle_count}
 
@@ -425,6 +443,7 @@ async def run_multiple_simulations(
     for run_idx in range(num_runs):
         _env, _config = _new_environment()
         _metrics_history = [_snapshot_metrics(_env, _config)]
+        tb_logger = _new_tensorboard_logger(f"multi_{run_idx}")
 
         # W&B: each independent run gets its own W&B run.
         if WANDB_ENABLED:
@@ -444,32 +463,38 @@ async def run_multiple_simulations(
         # MLflow: start a new run for each independent simulation.
         _mlflow_tracker.start_run(_config.to_dict())
 
-        for _ in range(resolved_steps):
-            await _env.step_async()
-            metrics = _snapshot_metrics(_env, _config)
-            _metrics_history.append(metrics)
+        try:
+            for _ in range(resolved_steps):
+                await _env.step_async()
+                metrics = _snapshot_metrics(_env, _config)
+                _metrics_history.append(metrics)
 
-            # W&B: log per-step metrics for this independent run.
-            _wandb_log_step(metrics)
+                # W&B: log per-step metrics for this independent run.
+                _wandb_log_step(metrics)
 
-            # MLflow: log per-step metrics.
-            _mlflow_tracker.log_metrics(metrics, step=metrics["tick"])
+                # MLflow: log per-step metrics.
+                _mlflow_tracker.log_metrics(metrics, step=metrics["tick"])
 
-        stored = _tracker.add_run(_metrics_history)
-        logger.info(
-            "Run %d/%d complete: run_id=%s (tracker total: %d)",
-            run_idx + 1,
-            num_runs,
-            stored.run_id,
-            _tracker.run_count,
-        )
+                # TensorBoard: log per-step metrics.
+                tb_logger.log_metrics(metrics, step=metrics["tick"])
 
-        # W&B: record final summary and close this run before starting the next.
-        _wandb_finish_run(_metrics_history[-1], stored.run_id, stored.timestamp)
+            stored = _tracker.add_run(_metrics_history)
+            logger.info(
+                "Run %d/%d complete: run_id=%s (tracker total: %d)",
+                run_idx + 1,
+                num_runs,
+                stored.run_id,
+                _tracker.run_count,
+            )
 
-        # MLflow: log final summary and end this run before starting the next.
-        _mlflow_tracker.log_final_metrics(_metrics_history[-1])
-        _mlflow_tracker.end_run()
+            # W&B: record final summary and close this run before starting the next.
+            _wandb_finish_run(_metrics_history[-1], stored.run_id, stored.timestamp)
+
+            # MLflow: log final summary and end this run before starting the next.
+            _mlflow_tracker.log_final_metrics(_metrics_history[-1])
+        finally:
+            tb_logger.close_writer()
+            _mlflow_tracker.end_run()
 
     aggregate = compute_aggregate_metrics(_tracker.runs)
     return {
