@@ -422,6 +422,8 @@ class LLMPolicy(AgentPolicy):
         # used to compute avg_confidence and decision_volatility metrics.
         self._confidence_history: List[float] = []
         self._all_decisions: List[str] = []
+        # One-shot per-run prompt sample logging for observability.
+        self._prompt_sample_logged: bool = False
         if self.provider is None:
             # Defensive fallback preserves previous local defaults if no provider
             # is injected by the caller.
@@ -433,6 +435,36 @@ class LLMPolicy(AgentPolicy):
 
     def _log_fallback(self, reason: str) -> None:
         logger.warning("LLM fallback triggered: %s", reason)
+
+    def reset_prompt_debug_sample(self) -> None:
+        """Allow caller to reset per-run prompt sample logging."""
+        self._prompt_sample_logged = False
+
+    def _maybe_log_prompt_sample(
+        self,
+        agent,
+        state_summary: str,
+        memory_summary: str,
+        prompt: str,
+    ) -> None:
+        """Emit one structured prompt sample log for the current run."""
+        if self._prompt_sample_logged:
+            return
+
+        payload = {
+            "agent_id": getattr(agent, "agent_id", None),
+            "persona": {
+                "risk_tolerance": getattr(agent, "risk_tolerance", "unknown"),
+                "social_preference": getattr(agent, "social_preference", "unknown"),
+                "memory_bias": getattr(agent, "memory_bias", "unknown"),
+                "goal": getattr(agent, "goal", "unknown"),
+            },
+            "state_summary": state_summary,
+            "memory_summary": memory_summary,
+            "final_prompt": prompt,
+        }
+        logger.info("LLM PROMPT SAMPLE %s", json.dumps(payload))
+        self._prompt_sample_logged = True
 
     def _record_llm_success(self, strategy: str) -> None:
         """Track one successful LLM-produced strategy and emit diagnostics."""
@@ -853,7 +885,9 @@ class LLMPolicy(AgentPolicy):
         """
         state_summary = build_state_summary(agent)
         memory_summary = format_memory_summary(agent, window=10)
-        return build_decision_prompt(agent, state_summary, memory_summary)
+        prompt = build_decision_prompt(agent, state_summary, memory_summary)
+        self._maybe_log_prompt_sample(agent, state_summary, memory_summary, prompt)
+        return prompt
 
     # ------------------------------------------------------------------
     # Cache helpers
@@ -916,7 +950,7 @@ class LLMPolicy(AgentPolicy):
         relationship_section = self._relationship_section(agent, context)
         environment_section = self._environment_section(agent)
 
-        return (
+        prompt = (
             base_prompt
             + "\n\n"
             + "=== OPPONENT & ENVIRONMENT ===\n"
@@ -924,6 +958,8 @@ class LLMPolicy(AgentPolicy):
             + relationship_section
             + environment_section
         )
+        self._maybe_log_prompt_sample(agent, state_summary, memory_summary, prompt)
+        return prompt
 
     def _agent_state_section(self, agent) -> str:
         """Return a prompt section describing the deciding agent's own state."""
@@ -1087,7 +1123,16 @@ class LLMPolicy(AgentPolicy):
                     f"avg_trust={avg_trust:.2f}"
                 )
             )
-        return "\n".join(lines)
+        prompt = "\n".join(lines)
+        if agent_batch:
+            sample_agent = agent_batch[0]
+            self._maybe_log_prompt_sample(
+                sample_agent,
+                build_state_summary(sample_agent),
+                format_memory_summary(sample_agent, window=10),
+                prompt,
+            )
+        return prompt
 
     def _parse_batch_response(self, text: str, agent_batch: List[Any]) -> Dict[Any, str]:
         """Parse batched strategy JSON into an agent_id -> action mapping."""

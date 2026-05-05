@@ -190,7 +190,7 @@ export default function Home() {
           {mainView === "simulation" ? (
             <SimulationCharts metrics={activeMetrics} chartTitle={chartTitle} />
           ) : (
-            <AgentInsights metrics={activeMetrics} />
+            <AgentInsights metrics={activeMetrics} fallbackMetrics={metrics} />
           )}
         </section>
       </div>
