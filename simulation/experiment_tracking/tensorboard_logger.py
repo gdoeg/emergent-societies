@@ -43,7 +43,7 @@ _LOG_DIR = "./runs"
 
 def _is_enabled() -> bool:
     """Return ``True`` when the ``TENSORBOARD_ENABLED`` feature flag is set."""
-    return os.getenv("TENSORBOARD_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    return os.getenv("TENSORBOARD_ENABLED", "false").lower() == "true"
 
 
 def _import_summary_writer():
@@ -54,16 +54,18 @@ def _import_summary_writer():
     try:
         from torch.utils.tensorboard import SummaryWriter  # noqa: PLC0415
 
+        logger.debug("TensorBoard SummaryWriter resolved from torch.utils.tensorboard")
         return SummaryWriter
-    except ImportError:
-        pass
+    except ImportError as exc:
+        logger.debug("torch.utils.tensorboard unavailable: %s", exc)
 
     try:
         from tensorboardX import SummaryWriter  # noqa: PLC0415
 
+        logger.debug("TensorBoard SummaryWriter resolved from tensorboardX")
         return SummaryWriter
-    except ImportError:
-        pass
+    except ImportError as exc:
+        logger.debug("tensorboardX unavailable: %s", exc)
 
     return None
 
@@ -84,23 +86,26 @@ class TensorBoardLogger:
         self.enabled: bool = False
         self._writer: Any = None
         self._SummaryWriter: Any = None
+        self._log_path: Optional[str] = None
+
+        flag_value = os.getenv("TENSORBOARD_ENABLED", "false")
+        logger.debug("Creating TensorBoardLogger with TENSORBOARD_ENABLED=%r", flag_value)
 
         if not _is_enabled():
-            logger.debug("TensorBoard logging disabled (TENSORBOARD_ENABLED not set)")
+            logger.debug("TensorBoard logging disabled (TENSORBOARD_ENABLED=%r)", flag_value)
             return
 
         writer_cls = _import_summary_writer()
         if writer_cls is None:
             logger.warning(
-                "Neither torch.utils.tensorboard nor tensorboardX is installed – "
-                "TensorBoard logging disabled. "
-                "Install one with: pip install tensorboardX"
+                "Neither torch.utils.tensorboard nor tensorboardX is available; "
+                "TensorBoard logging disabled. Install one with: pip install tensorboardX"
             )
             return
 
         self._SummaryWriter = writer_cls
         self.enabled = True
-        logger.info("TensorBoard logging enabled (log_dir=%s)", _LOG_DIR)
+        logger.info("TensorBoard logging enabled (base_log_dir=%s)", os.path.abspath(_LOG_DIR))
 
     # ------------------------------------------------------------------
     # Public API
@@ -116,10 +121,14 @@ class TensorBoardLogger:
                 subdirectory name under :data:`_LOG_DIR`.
         """
         if not self.enabled:
+            logger.debug("Skipping TensorBoard init_writer for run_id=%s because logger is disabled", run_id)
             return
         try:
-            log_path = os.path.join(_LOG_DIR, run_id)
+            log_path = os.path.abspath(os.path.join(_LOG_DIR, run_id))
+            os.makedirs(log_path, exist_ok=True)
+            logger.debug("Initializing TensorBoard writer for run_id=%s at %s", run_id, log_path)
             self._writer = self._SummaryWriter(log_dir=log_path)
+            self._log_path = log_path
             logger.debug("TensorBoard writer opened at %s", log_path)
         except Exception:  # noqa: BLE001
             logger.exception("TensorBoard init_writer failed; logging disabled for this run")
@@ -133,10 +142,21 @@ class TensorBoardLogger:
             value: Numeric value to record.
             step: Global step index associated with this value.
         """
-        if not self.enabled or self._writer is None:
+        if not self.enabled:
+            logger.debug("Skipping TensorBoard log_scalar for %s at step %d because logger is disabled", metric_name, step)
+            return
+        if self._writer is None:
+            logger.debug("Skipping TensorBoard log_scalar for %s at step %d because writer is not initialized", metric_name, step)
             return
         try:
             self._writer.add_scalar(metric_name, value, global_step=step)
+            logger.debug(
+                "TensorBoard logged metric name=%s value=%s step=%d path=%s",
+                metric_name,
+                value,
+                step,
+                self._log_path,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("TensorBoard log_scalar failed for %r at step %d", metric_name, step)
 
@@ -151,8 +171,13 @@ class TensorBoardLogger:
             step_metrics: Metrics dict for the current simulation step.
             step: Current simulation step index.
         """
-        if not self.enabled or self._writer is None:
+        if not self.enabled:
+            logger.debug("Skipping TensorBoard log_metrics at step %d because logger is disabled", step)
             return
+        if self._writer is None:
+            logger.debug("Skipping TensorBoard log_metrics at step %d because writer is not initialized", step)
+            return
+        logger.debug("TensorBoard log_metrics called at step %d with keys=%s", step, sorted(step_metrics.keys()))
         for key in _STEP_METRICS:
             if key == "cooperation_pct":
                 value = step_metrics.get("cooperation_pct", step_metrics.get("pct_cooperating"))
@@ -166,11 +191,16 @@ class TensorBoardLogger:
 
         Safe to call even when no writer is open.
         """
-        if not self.enabled or self._writer is None:
+        if not self.enabled:
+            logger.debug("Skipping TensorBoard close_writer because logger is disabled")
+            return
+        if self._writer is None:
+            logger.debug("Skipping TensorBoard close_writer because no writer is open")
             return
         try:
+            self._writer.flush()
             self._writer.close()
-            logger.debug("TensorBoard writer closed")
+            logger.debug("TensorBoard writer closed at %s", self._log_path)
         except Exception:  # noqa: BLE001
             logger.exception("TensorBoard close_writer failed")
         finally:

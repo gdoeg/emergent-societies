@@ -16,6 +16,7 @@ class Simulation:
         self.metrics_logger = MetricsLogger()
 
         run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        logger.debug("Creating simulation TensorBoard logger for run_id=%s", run_id)
         self._tb_logger = TensorBoardLogger()
         self._tb_logger.init_writer(run_id)
 
@@ -65,6 +66,7 @@ class Simulation:
             max_power=max_power,
         )
         logger.debug(f"Step {step}: Recorded metrics - {metrics}")
+        logger.debug("Step %d: forwarding metrics to TensorBoard at tick=%d", step, self.world.time)
         self._tb_logger.log_metrics(metrics, step=self.world.time)
         return metrics
 
@@ -94,8 +96,11 @@ class Simulation:
             else SimulationConfig.__dataclass_fields__["chunk_size"].default
         )
         remaining = self.steps
-        while remaining > 0:
-            to_run = min(chunk_size, remaining)
-            self.run_steps(to_run)
-            remaining -= to_run
-        self._tb_logger.close_writer()
+        try:
+            while remaining > 0:
+                to_run = min(chunk_size, remaining)
+                self.run_steps(to_run)
+                remaining -= to_run
+        finally:
+            logger.debug("Simulation run finished; closing TensorBoard writer")
+            self._tb_logger.close_writer()
