@@ -26,11 +26,12 @@ metrics
 import sqlite3
 import datetime
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = "./experiments.db"
+DB_PATH = os.environ.get("EXPERIMENTS_DB_PATH", "./experiments.db")
 
 
 def _connect() -> sqlite3.Connection:
@@ -83,7 +84,7 @@ def insert_run(config) -> int:
         The auto-assigned primary key of the new ``runs`` row.
     """
     config_name = getattr(config, "config_name", None) or getattr(config, "policy_type", "default")
-    timestamp = datetime.datetime.utcnow().isoformat()
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     with _connect() as conn:
         cursor = conn.execute(
             """
