@@ -3,6 +3,7 @@ import datetime
 from metrics.economics import MetricsLogger, compute_power
 from simulation.config import SimulationConfig
 from simulation.experiment_tracking.tensorboard_logger import TensorBoardLogger
+from simulation.storage import db
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,10 @@ class Simulation:
         logger.debug("Creating simulation TensorBoard logger for run_id=%s", run_id)
         self._tb_logger = TensorBoardLogger()
         self._tb_logger.init_writer(run_id)
+
+        db.init_db()
+        self._db_run_id = db.insert_run(config) if config is not None else None
+        logger.debug("DB run registered with id=%s", self._db_run_id)
 
     def step(self) -> dict:
         """Execute a single simulation tick and record metrics.
@@ -68,6 +73,8 @@ class Simulation:
         logger.debug(f"Step {step}: Recorded metrics - {metrics}")
         logger.debug("Step %d: forwarding metrics to TensorBoard at tick=%d", step, self.world.time)
         self._tb_logger.log_metrics(metrics, step=self.world.time)
+        if self._db_run_id is not None:
+            db.insert_metric(self._db_run_id, self.world.time, metrics)
         return metrics
 
     def run_steps(self, n_steps: int) -> None:
