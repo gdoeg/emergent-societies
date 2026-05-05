@@ -29,3 +29,10 @@ Thumbs.db
 # Node / Next.js
 dashboard/node_modules/
 dashboard/.next/
+
+
+# Experiments
+experiments.db
+mlflow.db
+runs/
+mlruns/

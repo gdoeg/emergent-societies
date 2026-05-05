@@ -74,6 +74,7 @@ class SimulationConfig:
             when the limit is reached (default: ``50``).
     """
 
+    config_name: str = ""
     num_agents: int = 100
     num_steps: int = 100
     initial_resources: int = 10
@@ -194,6 +195,7 @@ class SimulationConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""
         return {
+            "config_name": self.config_name,
             "num_agents": self.num_agents,
             "num_steps": self.num_steps,
             "initial_resources": self.initial_resources,
@@ -242,6 +244,7 @@ class SimulationConfig:
     def __repr__(self) -> str:
         return (
             f"SimulationConfig("
+            f"config_name={self.config_name!r}, "
             f"num_agents={self.num_agents}, "
             f"num_steps={self.num_steps}, "
             f"initial_resources={self.initial_resources}, "
