@@ -95,7 +95,7 @@ EXPERIMENTS: List[Experiment] = [
             "times with different random seeds and measuring the variance of "
             "final Gini values across runs."
         ),
-        metrics=["path_dependence", "gini_slope", "stability"],
+        metrics=["gini_slope", "stability"],
         parameters={"decision_interval": 15},
     ),
     Experiment(

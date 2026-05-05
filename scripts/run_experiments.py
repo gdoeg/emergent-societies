@@ -306,7 +306,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     cw = 20   # config column width
     mw = 14   # metric column width
-    sep_width = cw + mw * 4
+    sep_width = cw + mw * len(derived_keys)
 
     print(f"\n{'=' * sep_width}")
     print("EXPERIMENT SUMMARY — DERIVED METRICS")
