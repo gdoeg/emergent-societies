@@ -196,7 +196,10 @@ class SimulationConfig:
             raise ValueError("memory_size must be at least 1")
 
         if not 0.0 <= self.llm_temperature <= 2.0:
-            raise ValueError("llm_temperature must be within [0.0, 2.0]")
+            raise ValueError(
+                # OpenAI and most OpenAI-compatible providers cap temperature at 2.0.
+                "llm_temperature must be within [0.0, 2.0]"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a plain dictionary representation suitable for logging or serialisation."""

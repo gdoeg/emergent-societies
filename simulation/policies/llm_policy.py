@@ -39,6 +39,10 @@ _DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
 _FALLBACK_ACTION = "defect"  # temporary for debugging
 # Maximum number of cached decisions kept in memory per policy instance.
 _MAX_CACHE_SIZE = 1024
+# Maximum characters kept for the LLM-provided reasoning field in structured
+# responses.  Reasoning is stored in interaction_memory and log records; this
+# limit keeps per-agent memory usage bounded while preserving a useful summary.
+_MAX_REASONING_LENGTH = 200
 
 # Retry configuration defaults. These must not be read from the environment at
 # import time because entrypoints may call load_dotenv() after importing this
@@ -1373,6 +1377,8 @@ class LLMPolicy(AgentPolicy):
         """
         # --- Attempt 1: structured JSON ---
         json_text = text.strip()
+        # Strip markdown code fences: some LLMs wrap JSON in ```json ... ```
+        # despite explicit instructions to output raw JSON only.
         if json_text.startswith("```"):
             json_text = re.sub(r"^```(?:json)?\s*", "", json_text, flags=re.IGNORECASE)
             json_text = re.sub(r"\s*```$", "", json_text.strip())
@@ -1387,7 +1393,7 @@ class LLMPolicy(AgentPolicy):
                         confidence = max(0.0, min(1.0, confidence))
                     except (TypeError, ValueError):
                         confidence = 0.5
-                    reasoning = str(payload.get("reasoning", ""))[:200]
+                    reasoning = str(payload.get("reasoning", ""))[:_MAX_REASONING_LENGTH]
                     return raw_decision, False, confidence, reasoning
         except (json.JSONDecodeError, ValueError):
             pass
