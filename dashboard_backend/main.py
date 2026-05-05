@@ -111,6 +111,7 @@ def _make_agents(config: SimulationConfig):
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
             llm_models=config.llm_models.split(",") if config.llm_models else None,
+            temperature=getattr(config, "llm_temperature", 0.7),
         )
 
         def agent_policy():
@@ -158,6 +159,7 @@ def _make_policy(config: SimulationConfig):
             enable_async=config.enable_async_llm,
             debug_llm=config.debug_llm,
             llm_models=config.llm_models.split(",") if config.llm_models else None,
+            temperature=getattr(config, "llm_temperature", 0.7),
         )
 
     logger.info("Using DeterministicPolicy in backend")

@@ -222,7 +222,7 @@ class BaseLLMProvider:
         """
         raise NotImplementedError
 
-    async def generate(self, prompt: str, expect_json: bool = False) -> str:
+    async def generate(self, prompt: str, expect_json: bool = False, temperature: Optional[float] = None) -> str:
         raise NotImplementedError
 
 
@@ -250,12 +250,12 @@ class OllamaProvider(BaseLLMProvider):
     def with_model(self, model: str) -> "OllamaProvider":
         return OllamaProvider(base_url=self.base_url, model=model, timeout=self.timeout)
 
-    async def generate(self, prompt: str, expect_json: bool = False) -> str:
+    async def generate(self, prompt: str, expect_json: bool = False, temperature: Optional[float] = None) -> str:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 20,
-            "temperature": 0.0,
+            "max_tokens": 200 if expect_json else 20,
+            "temperature": temperature if temperature is not None else 0.0,
             # Keep model loaded in Ollama to avoid cold reload between calls.
             "keep_alive": -1,
         }
@@ -321,7 +321,7 @@ class GroqProvider(BaseLLMProvider):
     def with_model(self, model: str) -> "GroqProvider":
         return GroqProvider(api_key=self.api_key, model=model, timeout=self.timeout)
 
-    async def generate(self, prompt: str, expect_json: bool = False) -> str:
+    async def generate(self, prompt: str, expect_json: bool = False, temperature: Optional[float] = None) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -333,7 +333,7 @@ class GroqProvider(BaseLLMProvider):
                 {"role": "system", "content": "You are a decision-making agent."},
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.7,
+            "temperature": temperature if temperature is not None else 0.7,
         }
 
         try:
