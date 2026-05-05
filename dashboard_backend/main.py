@@ -20,6 +20,7 @@ from simulation.environment import Environment
 from simulation.policies.deterministic_policy import DeterministicPolicy
 from simulation.policies.llm_policy import LLMPolicy
 from simulation.policies.llm_provider import get_llm_provider
+from simulation.storage import db
 from metrics.economics import compute_gini, compute_power
 from metrics.metrics import average_degree, network_density
 from dashboard_backend.tracker import SimulationTracker, compute_aggregate_metrics
@@ -192,6 +193,8 @@ class RunMultipleRequest(BaseModel):
 
 @app.on_event("startup")
 async def log_startup():
+    # Initialize SQLite database for run tracking
+    db.init_db()
     logger.info("FastAPI backend started on /metrics, /run, /reset, /aggregate-metrics, /run-multiple")
     seen_policy_ids = set()
     for agent in _env.agents:
@@ -382,6 +385,10 @@ async def run_simulation(
     # MLflow: start a new run and log config params.
     _mlflow_tracker.start_run(_config.to_dict())
 
+    # SQLite: create a new run record
+    db_run_id = db.insert_run(_config)
+    logger.debug("SQLite run registered with id=%s", db_run_id)
+
     run_start_len = len(_metrics_history)
     try:
         for _ in range(resolved_steps):
@@ -397,6 +404,9 @@ async def run_simulation(
 
             # TensorBoard: log per-step metrics.
             tb_logger.log_metrics(metrics, step=metrics["tick"])
+
+            # SQLite: log per-step metrics.
+            db.insert_metric(db_run_id, metrics["tick"], metrics)
 
         logger.info("Current tick: %d", _env.cycle_count)
 
@@ -463,6 +473,10 @@ async def run_multiple_simulations(
         # MLflow: start a new run for each independent simulation.
         _mlflow_tracker.start_run(_config.to_dict())
 
+        # SQLite: create a new run record for this independent simulation
+        db_run_id = db.insert_run(_config)
+        logger.debug("SQLite run registered for run %d/%d with id=%s", run_idx + 1, num_runs, db_run_id)
+
         try:
             for _ in range(resolved_steps):
                 await _env.step_async()
@@ -477,6 +491,9 @@ async def run_multiple_simulations(
 
                 # TensorBoard: log per-step metrics.
                 tb_logger.log_metrics(metrics, step=metrics["tick"])
+
+                # SQLite: log per-step metrics.
+                db.insert_metric(db_run_id, metrics["tick"], metrics)
 
             stored = _tracker.add_run(_metrics_history)
             logger.info(
