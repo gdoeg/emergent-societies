@@ -218,3 +218,20 @@ emergent-societies/
 - AGENT_DOCUMENTATION.md: Agent API details
 - docs/experiments.md: Experiment notes
 
+## References
+
+- Park, J. S., O’Brien, J., Cai, C. J., Morris, M. R., Liang, P., & Bernstein, M. S. (2023). *Generative Agents: Interactive Simulacra of Human Behavior*. UIST 2023.  
+  https://arxiv.org/abs/2304.03442
+
+- Epstein, J. M., & Axtell, R. (1996). *Growing Artificial Societies: Social Science from the Bottom Up*. Brookings Institution Press.
+
+- OpenAI. (2023). *GPT-4 Technical Report*.  
+  https://arxiv.org/abs/2303.08774
+
+- Groq Inc. *Groq API Documentation*.  
+  https://console.groq.com/docs
+
+- Thoughtworks. (2024). *Technology Radar Vol. 31 — Multi-Agent Systems*.  
+  https://www.thoughtworks.com/radar
+
+- Wooldridge, M. (2009). *An Introduction to MultiAgent Systems*. Wiley.
